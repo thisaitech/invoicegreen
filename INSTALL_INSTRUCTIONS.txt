@@ -1,0 +1,190 @@
+================================================================================
+                    ESTIMATE GENERATOR - INSTALLATION GUIDE
+================================================================================
+
+STEP 1: INSTALL NODE.JS (Required - One Time Only)
+--------------------------------------------------------------------------------
+1. Go to: https://nodejs.org/
+2. Click the big green button that says "Download Node.js (LTS)"
+3. Run the downloaded file (node-vXX.X.X-x64.msi)
+4. Click "Next" through all screens (keep all defaults)
+5. Click "Finish"
+6. RESTART YOUR COMPUTER (important!)
+
+How to check if installed:
+- Press Windows Key + R
+- Type: cmd
+- Press Enter
+- Type: node --version
+- If you see "v18.x.x" or similar, it's installed!
+
+
+STEP 2: RUN THE APPLICATION
+--------------------------------------------------------------------------------
+
+METHOD A - EASIEST (Recommended)
+1. Find the file "RUN_APP.bat" in this folder
+2. Double-click it
+3. First time: Wait 2-3 minutes while it installs
+4. Application window will open automatically
+5. Done!
+
+METHOD B - MANUAL
+1. Right-click in this folder (estimate-app)
+2. Select "Open in Terminal" or "Open PowerShell window here"
+3. Type: npm install
+4. Press Enter and wait for installation
+5. Type: npm start
+6. Press Enter
+7. Application opens!
+
+
+FIRST RUN (Installation Process)
+--------------------------------------------------------------------------------
+When you first run the app, you'll see:
+
+> npm install
+> Downloading packages...
+> [████████████░░░░░] 75%
+
+This is NORMAL! It's downloading required files.
+Wait 2-3 minutes. Don't close the window.
+
+When you see:
+> Starting Estimate Generator...
+
+The app will open in a new window!
+
+
+DAILY USE (After First Installation)
+--------------------------------------------------------------------------------
+Just double-click RUN_APP.bat - it opens immediately!
+
+
+TROUBLESHOOTING
+================================================================================
+
+PROBLEM: "node is not recognized as an internal or external command"
+SOLUTION:
+- Node.js is not installed or not in PATH
+- Reinstall Node.js
+- Restart computer
+- Try again
+
+PROBLEM: App window doesn't open
+SOLUTION:
+- Check for error messages in the black window
+- Delete "node_modules" folder
+- Run RUN_APP.bat again
+
+PROBLEM: "Cannot find module 'electron'"
+SOLUTION:
+- Delete "node_modules" folder
+- Run: npm install
+- Run: npm start
+
+PROBLEM: Database error on startup
+SOLUTION:
+- Close the app
+- Go to: C:\Users\[YourName]\AppData\Roaming\estimate-app\
+- Delete "estimates.db"
+- Restart app (creates fresh database)
+
+PROBLEM: Printer not found
+SOLUTION:
+- Make sure printer is on and connected
+- Install Zebra printer drivers
+- Set printer as default, OR
+- Ensure printer name contains "Zebra"
+
+PROBLEM: PDF won't save
+SOLUTION:
+- Try saving to Desktop instead
+- Check you have write permissions
+- Make sure folder exists
+
+PROBLEM: App is slow
+SOLUTION:
+- Close other programs
+- Restart the app
+- Restart computer
+
+
+FILE LOCATIONS
+================================================================================
+
+Application Files:
+  D:\Project\invoice\estimate-app\
+
+Database (all your estimates):
+  C:\Users\[YourUsername]\AppData\Roaming\estimate-app\estimates.db
+
+PDFs (where you save them):
+  Usually: C:\Users\[YourUsername]\Documents\
+
+
+BACKING UP YOUR DATA
+================================================================================
+
+To backup all your estimates:
+1. Close the application
+2. Go to: C:\Users\[YourUsername]\AppData\Roaming\estimate-app\
+3. Copy "estimates.db" to a safe location (USB drive, cloud, etc.)
+
+To restore from backup:
+1. Close the application
+2. Copy your backed-up "estimates.db" file
+3. Paste into: C:\Users\[YourUsername]\AppData\Roaming\estimate-app\
+4. Replace existing file
+5. Restart app
+
+
+SYSTEM REQUIREMENTS
+================================================================================
+
+Minimum:
+- Windows 10 or Windows 11
+- 4 GB RAM
+- 500 MB free disk space
+- Internet connection (for initial setup only)
+
+Recommended:
+- Windows 11
+- 8 GB RAM
+- SSD drive
+- Zebra printer
+
+
+NEED MORE HELP?
+================================================================================
+
+1. Read README.md for detailed documentation
+2. Read QUICK_START.md for quick guide
+3. Read PROJECT_SUMMARY.md for technical details
+4. Check the troubleshooting section above
+
+
+QUICK REFERENCE
+================================================================================
+
+Install Dependencies:     npm install
+Start Application:        npm start  (or double-click RUN_APP.bat)
+Build Installer:          npm run build
+
+Default Login:            No login required!
+Database Location:        AppData\Roaming\estimate-app\estimates.db
+Printer Support:          Zebra printers (auto-detected)
+
+
+UNINSTALL
+================================================================================
+
+To remove the application:
+1. Delete the "estimate-app" folder
+2. Delete: C:\Users\[YourUsername]\AppData\Roaming\estimate-app\
+3. Done!
+
+
+================================================================================
+Version 1.0.0 | Last Updated: 2025 | For Windows 10/11
+================================================================================

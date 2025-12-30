@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Estimate Generator</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="dashboard-styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <h2>Estimate Generator</h2>
+      <nav>
+        <button class="nav-btn" data-view="dashboard">
+          <span>📊</span> Dashboard
+        </button>
+        <button class="nav-btn active" data-view="new-estimate">
+          <span>📝</span> New Estimate
+        </button>
+        <button class="nav-btn" data-view="customers">
+          <span>👥</span> Customers
+        </button>
+        <button class="nav-btn" data-view="items">
+          <span>📦</span> Manage Items
+        </button>
+      </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+
+      <!-- New Estimate View -->
+      <div id="new-estimate-view" class="view active">
+        <div class="header">
+          <h1>Create New Estimate</h1>
+          <div class="actions">
+            <button id="save-estimate-btn" class="btn btn-primary">Save Estimate</button>
+            <button id="preview-estimate-btn" class="btn btn-secondary">📄 Preview</button>
+            <button id="email-pdf-btn" class="btn btn-secondary">📧 Email PDF</button>
+            <button id="download-pdf-btn" class="btn btn-secondary">💾 Download PDF</button>
+          </div>
+        </div>
+
+        <div class="form-container">
+          <!-- Combined Section - Bill To (Left) and Estimate Info (Right) -->
+          <div class="form-section">
+            <div class="form-row-split">
+              <!-- Bill To - Left Side -->
+              <div class="form-half">
+                <h3>Bill To</h3>
+                <div class="form-group">
+                  <label>Name</label>
+                  <input type="text" id="bill-to-name" placeholder="Recipient Name" required>
+                </div>
+                <div class="form-group">
+                  <label>Address</label>
+                  <textarea id="bill-to-address" rows="4" placeholder="Full Address"></textarea>
+                </div>
+              </div>
+
+              <!-- Estimate Information - Right Side -->
+              <div class="form-half">
+                <h3>Estimate Information</h3>
+                <div class="form-group">
+                  <label>Estimate Number</label>
+                  <input type="text" id="estimate-number" readonly>
+                </div>
+                <div class="form-group">
+                  <label>Date</label>
+                  <input type="date" id="estimate-date">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Items -->
+          <div class="form-section">
+            <div class="section-header">
+              <h3>Items</h3>
+              <button id="add-item-row-btn" class="btn btn-small">+ Add Item</button>
+            </div>
+
+            <table class="items-table" id="items-table">
+              <thead>
+                <tr>
+                  <th style="width: 4%">#</th>
+                  <th style="width: 32%">Item & Description</th>
+                  <th style="width: 8%">Qty</th>
+                  <th style="width: 8%">Unit</th>
+                  <th style="width: 16%">Net Rate<br>(Inclusive GST)</th>
+                  <th style="width: 18%">Amount</th>
+                  <th style="width: 14%">Action</th>
+                </tr>
+              </thead>
+              <tbody id="items-tbody">
+                <!-- Items will be added here -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Totals -->
+          <div class="totals-section">
+            <div class="totals-left">
+              <div class="total-items-kg">
+                <strong>Items in Total:</strong> <span id="total-kg">0.00 kg</span>
+              </div>
+              <div class="total-words" id="total-words">Total In Words: Indian Rupee Zero Only</div>
+              <div class="signature-area">
+                <label>Authorized Signature</label>
+                <div class="signature-line"></div>
+              </div>
+            </div>
+            <div class="totals-right">
+              <div class="total-row">
+                <span class="total-label">Sub Total <span class="tax-note">(Tax Inclusive)</span></span>
+                <span class="total-value" id="sub-total">₹0.00</span>
+              </div>
+              <div class="total-row">
+                <span class="total-label">Advanced Payment / Previous Balance</span>
+                <input type="number" id="advanced-payment" class="total-input" value="0" step="0.01">
+              </div>
+              <div class="total-row">
+                <span class="total-label">Rounding <button id="auto-round-btn" class="auto-round-btn" title="Auto-calculate rounding">Auto</button></span>
+                <input type="number" id="rounding" class="total-input" value="0" step="0.01">
+              </div>
+              <div class="total-row grand-total">
+                <span class="total-label">Total</span>
+                <span class="total-value" id="grand-total">₹0.00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard View -->
+      <div id="dashboard-view" class="view">
+        <div class="header">
+          <h1>Dashboard</h1>
+          <div class="header-actions">
+            <div class="filter-buttons">
+              <button class="filter-btn active" data-filter="all">All Time</button>
+              <button class="filter-btn" data-filter="today">Today</button>
+              <button class="filter-btn" data-filter="week">This Week</button>
+              <button class="filter-btn" data-filter="month">This Month</button>
+              <button class="filter-btn" data-filter="custom">Custom Range</button>
+            </div>
+            <button id="delete-all-estimates-btn" class="btn btn-danger">🗑️ Delete All</button>
+          </div>
+        </div>
+
+        <div class="custom-date-range" id="custom-date-range" style="display: none;">
+          <label>From:</label>
+          <input type="date" id="filter-from">
+          <label>To:</label>
+          <input type="date" id="filter-to">
+          <button class="btn btn-small" id="apply-custom-filter">Apply</button>
+        </div>
+
+        <div class="payment-status-filter">
+          <label>Payment Status:</label>
+          <button class="status-filter-btn active" data-status="all">All</button>
+          <button class="status-filter-btn" data-status="completed">Completed</button>
+          <button class="status-filter-btn" data-status="partial">Partial Payment</button>
+          <button class="status-filter-btn" data-status="pending">Pending</button>
+        </div>
+
+        <div class="dashboard-stats">
+          <div class="stat-card">
+            <div class="stat-icon">📝</div>
+            <div class="stat-content">
+              <h3 id="total-estimates">0</h3>
+              <p>Total Estimates</p>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-content">
+              <h3 id="total-amount">₹0.00</h3>
+              <p>Total Amount</p>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">💵</div>
+            <div class="stat-content">
+              <h3 id="advanced-payment-total">₹0.00</h3>
+              <p>Advanced Payments</p>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-content">
+              <h3 id="pending-amount">₹0.00</h3>
+              <p>Pending Amount</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-chart">
+          <div class="estimates-header">
+            <h2>All Estimates</h2>
+            <div class="search-box">
+              <input type="text" id="estimate-search" placeholder="🔍 Search by customer name, estimate number...">
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Estimate No.</th>
+                  <th>Customer</th>
+                  <th>Total</th>
+                  <th>Advanced</th>
+                  <th>Pending</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="dashboard-estimates">
+                <!-- All estimates will be loaded here -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Estimates List View - REMOVED, merged into Dashboard -->
+      <div id="estimates-view" class="view" style="display: none;">
+        <div class="header">
+          <h1>All Estimates</h1>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Estimate No.</th>
+                <th>Date</th>
+                <th>Bill To</th>
+                <th>Total</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="estimates-tbody">
+              <!-- Estimates will be loaded here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Items Management View -->
+      <div id="items-view" class="view">
+        <div class="header">
+          <h1>Manage Items</h1>
+          <button id="add-new-item-btn" class="btn btn-primary">+ Add New Item</button>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Item Name</th>
+                <th>Description</th>
+                <th>Rate</th>
+                <th>Unit</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="items-master-tbody">
+              <!-- Items will be loaded here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Customers View -->
+      <div id="customers-view" class="view">
+        <div class="header">
+          <h1>Customer Management</h1>
+          <button id="add-customer-btn" class="btn btn-primary">+ Add Customer</button>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Customer Name</th>
+                <th>Address</th>
+                <th>Total Estimates</th>
+                <th>Total Amount</th>
+                <th>Paid</th>
+                <th>Pending</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="customers-tbody">
+              <!-- Customers will be loaded here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Print Preview Modal -->
+  <div id="print-preview-modal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Print Preview</h2>
+        <span class="close">&times;</span>
+      </div>
+      <div class="modal-body modal-preview">
+        <iframe id="preview-frame" style="width: 100%; height: 600px; border: 1px solid #ddd;"></iframe>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel close">Close</button>
+        <button id="print-from-preview-btn" class="btn btn-save">🖨️ Print Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Email Modal -->
+  <div id="email-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Email Estimate</h2>
+        <span class="close">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>To Email Address</label>
+          <input type="email" id="email-to" placeholder="customer@example.com" required>
+        </div>
+        <div class="form-group">
+          <label>Subject</label>
+          <input type="text" id="email-subject" value="Your Estimate" required>
+        </div>
+        <div class="form-group">
+          <label>Message (Optional)</label>
+          <textarea id="email-message" rows="4" placeholder="Dear Customer, Please find attached your estimate..."></textarea>
+        </div>
+        <div class="email-info">
+          <small>📎 Estimate will be attached as PDF</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel close">Cancel</button>
+        <button id="send-email-btn" class="btn btn-save">📧 Send Email</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Customer Modal -->
+  <div id="customer-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="customer-modal-title">Add Customer</h2>
+        <span class="close">&times;</span>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modal-customer-id">
+        <div class="form-group">
+          <label>Customer Name</label>
+          <input type="text" id="modal-customer-name" required>
+        </div>
+        <div class="form-group">
+          <label>Address</label>
+          <textarea id="modal-customer-address" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Phone (Optional)</label>
+            <input type="text" id="modal-customer-phone">
+          </div>
+          <div class="form-group">
+            <label>Email (Optional)</label>
+            <input type="email" id="modal-customer-email">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel close">Cancel</button>
+        <button id="save-customer-btn" class="btn btn-save">Save Customer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for Add/Edit Item -->
+  <div id="item-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Add New Item</h2>
+        <span class="close">&times;</span>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modal-item-id">
+        <div class="form-group">
+          <label>Item Name</label>
+          <input type="text" id="modal-item-name" required>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="modal-item-description" rows="2"></textarea>
+        </div>
+        <div class="form-group">
+          <label>HSN Code (Optional)</label>
+          <input type="text" id="modal-item-hsn" placeholder="e.g., 7217">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Rate</label>
+            <input type="number" id="modal-item-rate" step="0.01" required>
+          </div>
+          <div class="form-group">
+            <label>Unit</label>
+            <select id="modal-item-unit">
+              <option value="kg">kg</option>
+              <option value="pcs">pcs</option>
+              <option value="nos">nos</option>
+              <option value="bundle">bundle</option>
+              <option value="coil">coil</option>
+              <option value="meter">meter</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel close">Cancel</button>
+        <button id="save-item-btn" class="btn btn-save">Save Item</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+  <script src="customers.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
