@@ -215,12 +215,49 @@ async function initializeNewEstimate() {
   document.getElementById('bill-to-name').value = '';
   document.getElementById('bill-to-address').value = '';
 
+  // Load customer dropdown
+  await loadCustomerDropdown();
+
   currentEstimateItems = [];
   document.getElementById('items-tbody').innerHTML = '';
 
   // Add first row
   addItemRow();
   updateTotals();
+}
+
+// Load customers into dropdown
+async function loadCustomerDropdown() {
+  const customers = await ipcRenderer.invoke('get-customers');
+  const select = document.getElementById('customer-select');
+
+  select.innerHTML = '<option value="">-- Select Customer or Type Below --</option>';
+
+  customers.forEach(customer => {
+    const option = document.createElement('option');
+    option.value = customer.id;
+    option.textContent = customer.name;
+    select.appendChild(option);
+  });
+}
+
+// Select customer from dropdown
+async function selectCustomer(customerId) {
+  if (!customerId) {
+    document.getElementById('bill-to-name').value = '';
+    document.getElementById('bill-to-address').value = '';
+    return;
+  }
+
+  const customers = await ipcRenderer.invoke('get-customers');
+  const customer = customers.find(c => c.id == customerId);
+
+  if (customer) {
+    const fullAddress = `${customer.address}${customer.city ? '\n' + customer.city : ''}${customer.state ? ', ' + customer.state : ''}${customer.country ? '\n' + customer.country : ''}`;
+
+    document.getElementById('bill-to-name').value = customer.name;
+    document.getElementById('bill-to-address').value = fullAddress.trim();
+  }
 }
 
 function addItemRow() {
@@ -847,6 +884,7 @@ function generatePDFDocument() {
 
 // Make functions globally accessible
 window.selectItem = selectItem;
+window.selectCustomer = selectCustomer;
 window.updateItemQuantity = updateItemQuantity;
 window.updateItemUnit = updateItemUnit;
 window.updateItemRate = updateItemRate;

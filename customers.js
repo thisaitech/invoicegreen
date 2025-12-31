@@ -69,15 +69,25 @@ function openCustomerModal(customer = null) {
     document.getElementById('modal-customer-id').value = customer.id;
     document.getElementById('modal-customer-name').value = customer.name;
     document.getElementById('modal-customer-address').value = customer.address || '';
+    document.getElementById('modal-customer-city').value = customer.city || '';
+    document.getElementById('modal-customer-state').value = customer.state || 'Tamil Nadu';
     document.getElementById('modal-customer-phone').value = customer.phone || '';
     document.getElementById('modal-customer-email').value = customer.email || '';
+    document.getElementById('modal-customer-vehicle').value = customer.vehicle || '';
+    document.getElementById('modal-customer-gstn').value = customer.gstn || '';
+    document.getElementById('modal-customer-opening-balance').value = customer.opening_balance || 0;
   } else {
     title.textContent = 'Add Customer';
     document.getElementById('modal-customer-id').value = '';
     document.getElementById('modal-customer-name').value = '';
     document.getElementById('modal-customer-address').value = '';
+    document.getElementById('modal-customer-city').value = '';
+    document.getElementById('modal-customer-state').value = 'Tamil Nadu';
     document.getElementById('modal-customer-phone').value = '';
     document.getElementById('modal-customer-email').value = '';
+    document.getElementById('modal-customer-vehicle').value = '';
+    document.getElementById('modal-customer-gstn').value = '';
+    document.getElementById('modal-customer-opening-balance').value = 0;
   }
 
   modal.classList.add('active');
@@ -93,8 +103,14 @@ async function saveCustomer() {
   const customer = {
     name: document.getElementById('modal-customer-name').value,
     address: document.getElementById('modal-customer-address').value || '',
+    city: document.getElementById('modal-customer-city').value || '',
+    state: document.getElementById('modal-customer-state').value || 'Tamil Nadu',
+    country: 'India',
     phone: document.getElementById('modal-customer-phone').value || '',
-    email: document.getElementById('modal-customer-email').value || ''
+    email: document.getElementById('modal-customer-email').value || '',
+    vehicle: document.getElementById('modal-customer-vehicle').value || '',
+    gstn: document.getElementById('modal-customer-gstn').value || '',
+    opening_balance: parseFloat(document.getElementById('modal-customer-opening-balance').value) || 0
   };
 
   if (!customer.name) {

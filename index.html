@@ -51,12 +51,18 @@
               <div class="form-half">
                 <h3>Bill To</h3>
                 <div class="form-group">
+                  <label>Select Customer or Enter Manually</label>
+                  <select id="customer-select" onchange="selectCustomer(this.value)">
+                    <option value="">-- Select Customer or Type Below --</option>
+                  </select>
+                </div>
+                <div class="form-group">
                   <label>Name</label>
                   <input type="text" id="bill-to-name" placeholder="Recipient Name" required>
                 </div>
                 <div class="form-group">
                   <label>Address</label>
-                  <textarea id="bill-to-address" rows="4" placeholder="Full Address"></textarea>
+                  <textarea id="bill-to-address" rows="3" placeholder="Full Address"></textarea>
                 </div>
               </div>
 
@@ -368,16 +374,77 @@
         </div>
         <div class="form-group">
           <label>Address</label>
-          <textarea id="modal-customer-address" rows="3"></textarea>
+          <textarea id="modal-customer-address" rows="2"></textarea>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Phone (Optional)</label>
-            <input type="text" id="modal-customer-phone">
+            <label>City</label>
+            <select id="modal-customer-city">
+              <option value="">Select City</option>
+              <option value="Chennai">Chennai</option>
+              <option value="Coimbatore">Coimbatore</option>
+              <option value="Madurai">Madurai</option>
+              <option value="Tiruchirappalli">Tiruchirappalli</option>
+              <option value="Salem">Salem</option>
+              <option value="Tirunelveli">Tirunelveli</option>
+              <option value="Tiruppur">Tiruppur</option>
+              <option value="Erode">Erode</option>
+              <option value="Vellore">Vellore</option>
+              <option value="Thoothukudi">Thoothukudi</option>
+              <option value="Thanjavur">Thanjavur</option>
+              <option value="Dindigul">Dindigul</option>
+              <option value="Ranipet">Ranipet</option>
+              <option value="Nagercoil">Nagercoil</option>
+              <option value="Kumbakonam">Kumbakonam</option>
+              <option value="Karaikudi">Karaikudi</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>State</label>
+            <select id="modal-customer-state">
+              <option value="Tamil Nadu">Tamil Nadu</option>
+              <option value="Andhra Pradesh">Andhra Pradesh</option>
+              <option value="Karnataka">Karnataka</option>
+              <option value="Kerala">Kerala</option>
+              <option value="Telangana">Telangana</option>
+              <option value="Maharashtra">Maharashtra</option>
+              <option value="Gujarat">Gujarat</option>
+              <option value="Rajasthan">Rajasthan</option>
+              <option value="Uttar Pradesh">Uttar Pradesh</option>
+              <option value="West Bengal">West Bengal</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Country</label>
+            <input type="text" id="modal-customer-country" value="India" readonly>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Phone</label>
+            <input type="text" id="modal-customer-phone" placeholder="9876543210">
           </div>
           <div class="form-group">
             <label>Email (Optional)</label>
-            <input type="email" id="modal-customer-email">
+            <input type="email" id="modal-customer-email" placeholder="customer@example.com">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Vehicle Number (Optional)</label>
+            <input type="text" id="modal-customer-vehicle" placeholder="TN 01 AB 1234">
+          </div>
+          <div class="form-group">
+            <label>GSTN (Optional)</label>
+            <input type="text" id="modal-customer-gstn" placeholder="33XXXXX1234X1ZX">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Opening Balance (Optional)</label>
+            <input type="number" id="modal-customer-opening-balance" step="0.01" value="0" placeholder="0.00">
           </div>
         </div>
       </div>

@@ -284,8 +284,14 @@ ipcMain.handle('add-customer', (event, customer) => {
     id: data.nextCustomerId++,
     name: customer.name,
     address: customer.address || '',
+    city: customer.city || '',
+    state: customer.state || 'Tamil Nadu',
+    country: customer.country || 'India',
     phone: customer.phone || '',
-    email: customer.email || ''
+    email: customer.email || '',
+    vehicle: customer.vehicle || '',
+    gstn: customer.gstn || '',
+    opening_balance: parseFloat(customer.opening_balance) || 0
   };
 
   data.customers.push(newCustomer);
@@ -301,8 +307,14 @@ ipcMain.handle('update-customer', (event, customer) => {
       id: customer.id,
       name: customer.name,
       address: customer.address || '',
+      city: customer.city || '',
+      state: customer.state || 'Tamil Nadu',
+      country: customer.country || 'India',
       phone: customer.phone || '',
-      email: customer.email || ''
+      email: customer.email || '',
+      vehicle: customer.vehicle || '',
+      gstn: customer.gstn || '',
+      opening_balance: parseFloat(customer.opening_balance) || 0
     };
     saveData();
   }
