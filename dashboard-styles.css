@@ -316,3 +316,20 @@
   display: flex;
   gap: 10px;
 }
+
+/* Compact Form Groups */
+.form-group.compact {
+  margin-bottom: 8px;
+}
+
+.form-group.compact label {
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.form-group.compact input,
+.form-group.compact textarea,
+.form-group.compact select {
+  padding: 8px 10px;
+  font-size: 13px;
+}
