@@ -37,6 +37,7 @@
           <h1>Create New Estimate</h1>
           <div class="actions">
             <button id="save-estimate-btn" class="btn btn-primary">Save Estimate</button>
+            <button id="save-and-print-btn" class="btn btn-primary">💾 Save & Print</button>
             <button id="preview-estimate-btn" class="btn btn-secondary">📄 Preview</button>
             <button id="email-pdf-btn" class="btn btn-secondary">📧 Email PDF</button>
             <button id="download-pdf-btn" class="btn btn-secondary">💾 Download PDF</button>
@@ -490,6 +491,10 @@
               <option value="coil">coil</option>
               <option value="meter">meter</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label>Available Qty (Inventory)</label>
+            <input type="number" id="modal-item-available-qty" step="0.01" value="0" placeholder="Stock quantity">
           </div>
         </div>
       </div>

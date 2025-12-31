@@ -250,7 +250,7 @@ ipcMain.handle('save-pdf', async (event, pdfData, defaultName) => {
     return { success: true, path: filePath };
   }
 
-  return { success: false };
+  return { success: false, cancelled: true };
 });
 
 // Delete estimate

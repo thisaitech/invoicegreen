@@ -29,6 +29,7 @@ function setupEventListeners() {
   // New Estimate
   document.getElementById('add-item-row-btn').addEventListener('click', addItemRow);
   document.getElementById('save-estimate-btn').addEventListener('click', saveEstimate);
+  document.getElementById('save-and-print-btn').addEventListener('click', saveAndPrint);
   document.getElementById('preview-estimate-btn').addEventListener('click', showPrintPreview);
   document.getElementById('email-pdf-btn').addEventListener('click', showEmailModal);
   document.getElementById('download-pdf-btn').addEventListener('click', downloadPDF);
@@ -474,6 +475,53 @@ async function saveEstimate() {
   }
 }
 
+// Save and Print
+async function saveAndPrint() {
+  // First save
+  const estimateNumber = document.getElementById('estimate-number').value;
+  const estimateDate = document.getElementById('estimate-date').value;
+  const billToName = document.getElementById('bill-to-name').value;
+  const billToAddress = document.getElementById('bill-to-address').value;
+
+  if (!billToName) {
+    alert('Please enter Bill To name');
+    return;
+  }
+
+  if (currentEstimateItems.length === 0 || currentEstimateItems.every(i => i.quantity === 0)) {
+    alert('Please add at least one item');
+    return;
+  }
+
+  const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
+  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
+  const rounding = parseFloat(document.getElementById('rounding').value) || 0;
+  const total = subTotal - advancedPayment + rounding;
+
+  const estimateData = {
+    estimate_number: estimateNumber,
+    estimate_date: estimateDate,
+    place_of_supply: '',
+    bill_to_name: billToName,
+    bill_to_address: billToAddress,
+    sub_total: subTotal,
+    advanced_payment: advancedPayment,
+    rounding: rounding,
+    total: total,
+    total_in_words: numberToWords(total),
+    items: currentEstimateItems.filter(i => i.quantity > 0)
+  };
+
+  try {
+    await ipcRenderer.invoke('save-estimate', estimateData);
+    // Then print
+    await printEstimate();
+    initializeNewEstimate();
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
 // Print Estimate
 async function printEstimate() {
   const printers = await ipcRenderer.invoke('get-printers');
@@ -505,20 +553,27 @@ function generatePrintHTML() {
   const billToName = document.getElementById('bill-to-name').value;
   const billToAddress = document.getElementById('bill-to-address').value;
   const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
+  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
+  const rounding = parseFloat(document.getElementById('rounding').value) || 0;
+  const total = subTotal - advancedPayment + rounding;
+  const totalKg = currentEstimateItems.reduce((sum, item) => {
+    if (item.unit === 'kg') return sum + (parseFloat(item.quantity) || 0);
+    return sum;
+  }, 0);
 
   const itemsHTML = currentEstimateItems
     .filter(i => i.quantity > 0)
     .map((item, index) => `
       <tr>
-        <td>${index + 1}</td>
+        <td style="text-align: center;">${index + 1}</td>
         <td>
           <strong>${item.item_name}</strong><br>
           <small style="color: #666;">${item.description || ''}</small>
         </td>
-        <td>${item.quantity}</td>
-        <td>${item.unit}</td>
-        <td>₹${item.rate.toFixed(2)}</td>
-        <td style="text-align: right;">₹${item.amount.toFixed(2)}</td>
+        <td style="text-align: center;">${item.quantity}</td>
+        <td style="text-align: center;">${item.unit}</td>
+        <td style="text-align: right;">₹${item.rate.toFixed(2)}</td>
+        <td style="text-align: right;"><strong>₹${item.amount.toFixed(2)}</strong></td>
       </tr>
     `).join('');
 
@@ -527,20 +582,27 @@ function generatePrintHTML() {
     <html>
     <head>
       <style>
-        @page { size: A4; margin: 0.5in; }
-        body { font-family: Arial, sans-serif; font-size: 12px; }
-        .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .info-section { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        @page { size: A4; margin: 0.4in; }
+        body { font-family: Arial, sans-serif; font-size: 11px; margin: 0; padding: 0; }
+        .header { text-align: center; margin-bottom: 15px; border-bottom: 2px solid #000; padding-bottom: 8px; }
+        .header h1 { margin: 0; font-size: 22px; font-weight: bold; }
+        .info-section { display: flex; justify-content: space-between; margin-bottom: 15px; }
         .info-box { flex: 1; }
-        .info-box h3 { margin: 0 0 10px 0; font-size: 14px; border-bottom: 1px solid #999; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-        th { background: #f0f0f0; padding: 10px; text-align: left; border: 1px solid #ddd; font-size: 11px; }
-        td { padding: 8px; border: 1px solid #ddd; font-size: 11px; }
-        .totals { text-align: right; margin-top: 20px; }
-        .totals .row { margin: 5px 0; }
-        .totals .grand { font-size: 16px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; }
-        .words { margin-top: 20px; font-style: italic; color: #666; }
+        .info-box p { margin: 3px 0; font-size: 11px; }
+        .info-box h3 { margin: 0 0 8px 0; font-size: 12px; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 3px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+        th { background: #f0f0f0; padding: 6px; text-align: center; border: 1px solid #000; font-size: 10px; font-weight: bold; }
+        td { padding: 6px; border: 1px solid #000; font-size: 10px; }
+        .footer-section { display: flex; justify-content: space-between; margin-top: 15px; }
+        .footer-left { flex: 0 0 50%; }
+        .footer-right { flex: 0 0 45%; text-align: right; }
+        .totals-row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 11px; }
+        .totals-row.grand { font-size: 13px; font-weight: bold; border-top: 2px solid #000; padding-top: 6px; margin-top: 8px; }
+        .items-total { font-size: 11px; margin-bottom: 8px; }
+        .words { font-style: italic; color: #333; font-size: 10px; margin: 10px 0; }
+        .signature { margin-top: 30px; }
+        .signature-line { border-top: 1px solid #000; width: 150px; margin-top: 40px; }
+        .tax-note { font-size: 9px; font-style: italic; color: #666; }
       </style>
     </head>
     <body>
@@ -551,10 +613,10 @@ function generatePrintHTML() {
       <div class="info-section">
         <div class="info-box">
           <p><strong>Estimate No:</strong> ${estimateNumber}</p>
-          <p><strong>Date:</strong> ${new Date(estimateDate).toLocaleDateString('en-IN')}</p>
+          <p><strong>Estimate Date:</strong> ${new Date(estimateDate).toLocaleDateString('en-IN')}</p>
         </div>
         <div class="info-box">
-          <h3>Bill To</h3>
+          <h3>Recipient / Bill To</h3>
           <p><strong>${billToName}</strong></p>
           <p>${billToAddress.replace(/\n/g, '<br>')}</p>
         </div>
@@ -567,7 +629,7 @@ function generatePrintHTML() {
             <th width="40%">Item & Description</th>
             <th width="10%">Qty</th>
             <th width="10%">Unit</th>
-            <th width="15%">Rate</th>
+            <th width="15%">Net Rate<br/>(Inclusive GST)</th>
             <th width="20%">Amount</th>
           </tr>
         </thead>
@@ -576,13 +638,37 @@ function generatePrintHTML() {
         </tbody>
       </table>
 
-      <div class="totals">
-        <div class="row"><strong>Sub Total:</strong> ₹${subTotal.toFixed(2)}</div>
-        <div class="row grand"><strong>Total:</strong> ₹${subTotal.toFixed(2)}</div>
-      </div>
-
-      <div class="words">
-        <strong>Total In Words:</strong> ${numberToWords(subTotal)}
+      <div class="footer-section">
+        <div class="footer-left">
+          <div class="items-total"><strong>Items in Total:</strong> ${totalKg.toFixed(2)} kg</div>
+          <div class="words"><strong>Total In Words:</strong> ${numberToWords(total)}</div>
+          <div class="signature">
+            <p><strong>Authorized Signature</strong></p>
+            <div class="signature-line"></div>
+          </div>
+        </div>
+        <div class="footer-right">
+          <div class="totals-row">
+            <span>Sub Total <span class="tax-note">(Tax Inclusive)</span></span>
+            <span><strong>₹${subTotal.toFixed(2)}</strong></span>
+          </div>
+          ${advancedPayment > 0 ? `
+          <div class="totals-row">
+            <span>Advanced Payment / Previous Balance</span>
+            <span><strong>₹${advancedPayment.toFixed(2)}</strong></span>
+          </div>
+          ` : ''}
+          ${rounding !== 0 ? `
+          <div class="totals-row">
+            <span>Rounding</span>
+            <span><strong>₹${rounding.toFixed(2)}</strong></span>
+          </div>
+          ` : ''}
+          <div class="totals-row grand">
+            <span>Total</span>
+            <span>₹${total.toFixed(2)}</span>
+          </div>
+        </div>
       </div>
     </body>
     </html>
@@ -597,10 +683,18 @@ async function downloadPDF() {
   const pdfData = doc.output('datauristring').split(',')[1];
   const defaultName = `Estimate_${estimateNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
 
-  const result = await ipcRenderer.invoke('save-pdf', pdfData, defaultName);
+  try {
+    const result = await ipcRenderer.invoke('save-pdf', pdfData, defaultName);
 
-  if (result.success) {
-    alert(`PDF saved successfully to:\n${result.path}`);
+    if (result.success) {
+      alert(`PDF saved successfully to:\n${result.path}`);
+    } else if (result.cancelled) {
+      // User cancelled, do nothing
+    } else {
+      alert('Failed to save PDF. Please try again.');
+    }
+  } catch (error) {
+    alert('Error generating PDF: ' + error.message);
   }
 }
 
