@@ -44,16 +44,15 @@ function renderCustomersTable(customerStats) {
 
   tbody.innerHTML = customerStats.map(customer => `
     <tr>
-      <td><strong>${customer.name}</strong></td>
-      <td>${(customer.address || '').substring(0, 50)}${customer.address && customer.address.length > 50 ? '...' : ''}</td>
-      <td>${customer.totalEstimates}</td>
-      <td>₹${customer.totalAmount.toFixed(2)}</td>
-      <td style="color: #48bb78;">₹${customer.paidAmount.toFixed(2)}</td>
-      <td style="color: ${customer.pendingAmount > 0 ? '#f56565' : '#48bb78'}; font-weight: 600;">₹${customer.pendingAmount.toFixed(2)}</td>
-      <td>
+      <td style="text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong>${customer.name}</strong></td>
+      <td style="text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${customer.address || ''}">${(customer.address || '').substring(0, 50)}${customer.address && customer.address.length > 50 ? '...' : ''}</td>
+      <td style="text-align: center;">${customer.totalEstimates}</td>
+      <td style="text-align: right;">₹${customer.totalAmount.toFixed(2)}</td>
+      <td style="text-align: right; color: #48bb78;">₹${customer.paidAmount.toFixed(2)}</td>
+      <td style="text-align: right; color: ${customer.pendingAmount > 0 ? '#f56565' : '#48bb78'}; font-weight: 600;">₹${customer.pendingAmount.toFixed(2)}</td>
+      <td style="text-align: center; white-space: nowrap;">
         <button class="btn btn-edit btn-small" onclick="editCustomer(${customer.id})">Edit</button>
-        <button class="btn btn-danger btn-small" onclick="deleteCustomer(${customer.id})">Delete</button>
-        <button class="btn btn-small" onclick="viewCustomerDetails(${customer.id})" style="background: #667eea; color: white;">View</button>
+        <button class="btn btn-danger btn-small" onclick="deleteCustomer(${customer.id})">Del</button>
       </td>
     </tr>
   `).join('');
@@ -64,33 +63,59 @@ function openCustomerModal(customer = null) {
   const modal = document.getElementById('customer-modal');
   const title = document.getElementById('customer-modal-title');
 
+  // Get all input elements
+  const nameInput = document.getElementById('modal-customer-name');
+  const addressInput = document.getElementById('modal-customer-address');
+  const cityInput = document.getElementById('modal-customer-city');
+  const stateInput = document.getElementById('modal-customer-state');
+  const countryInput = document.getElementById('modal-customer-country');
+  const phoneInput = document.getElementById('modal-customer-phone');
+  const emailInput = document.getElementById('modal-customer-email');
+  const vehicleInput = document.getElementById('modal-customer-vehicle');
+  const gstnInput = document.getElementById('modal-customer-gstn');
+  const balanceInput = document.getElementById('modal-customer-opening-balance');
+
+  // Ensure all inputs are editable (remove any readonly/disabled attributes)
+  const allInputs = [nameInput, addressInput, cityInput, stateInput, countryInput, phoneInput, emailInput, vehicleInput, gstnInput, balanceInput];
+  allInputs.forEach(input => {
+    if (input) {
+      input.removeAttribute('readonly');
+      input.removeAttribute('disabled');
+    }
+  });
+
   if (customer) {
     title.textContent = 'Edit Customer';
     document.getElementById('modal-customer-id').value = customer.id;
-    document.getElementById('modal-customer-name').value = customer.name;
-    document.getElementById('modal-customer-address').value = customer.address || '';
-    document.getElementById('modal-customer-city').value = customer.city || '';
-    document.getElementById('modal-customer-state').value = customer.state || 'Tamil Nadu';
-    document.getElementById('modal-customer-phone').value = customer.phone || '';
-    document.getElementById('modal-customer-email').value = customer.email || '';
-    document.getElementById('modal-customer-vehicle').value = customer.vehicle || '';
-    document.getElementById('modal-customer-gstn').value = customer.gstn || '';
-    document.getElementById('modal-customer-opening-balance').value = customer.opening_balance || 0;
+    nameInput.value = customer.name;
+    addressInput.value = customer.address || '';
+    cityInput.value = customer.city || '';
+    stateInput.value = customer.state || 'Tamil Nadu';
+    countryInput.value = customer.country || 'India';
+    phoneInput.value = customer.phone || '';
+    emailInput.value = customer.email || '';
+    vehicleInput.value = customer.vehicle || '';
+    gstnInput.value = customer.gstn || '';
+    balanceInput.value = customer.opening_balance || '';
   } else {
     title.textContent = 'Add Customer';
     document.getElementById('modal-customer-id').value = '';
-    document.getElementById('modal-customer-name').value = '';
-    document.getElementById('modal-customer-address').value = '';
-    document.getElementById('modal-customer-city').value = '';
-    document.getElementById('modal-customer-state').value = 'Tamil Nadu';
-    document.getElementById('modal-customer-phone').value = '';
-    document.getElementById('modal-customer-email').value = '';
-    document.getElementById('modal-customer-vehicle').value = '';
-    document.getElementById('modal-customer-gstn').value = '';
-    document.getElementById('modal-customer-opening-balance').value = 0;
+    nameInput.value = '';
+    addressInput.value = '';
+    cityInput.value = '';
+    stateInput.value = 'Tamil Nadu';
+    countryInput.value = 'India';
+    phoneInput.value = '';
+    emailInput.value = '';
+    vehicleInput.value = '';
+    gstnInput.value = '';
+    balanceInput.value = '';
   }
 
   modal.classList.add('active');
+
+  // Focus on the name input after modal is visible
+  setTimeout(() => nameInput.focus(), 100);
 }
 
 function closeCustomerModal() {
@@ -105,7 +130,7 @@ async function saveCustomer() {
     address: document.getElementById('modal-customer-address').value || '',
     city: document.getElementById('modal-customer-city').value || '',
     state: document.getElementById('modal-customer-state').value || 'Tamil Nadu',
-    country: 'India',
+    country: document.getElementById('modal-customer-country').value || 'India',
     phone: document.getElementById('modal-customer-phone').value || '',
     email: document.getElementById('modal-customer-email').value || '',
     vehicle: document.getElementById('modal-customer-vehicle').value || '',

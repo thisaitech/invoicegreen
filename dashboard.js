@@ -1,5 +1,11 @@
 // Dashboard functionality
 
+// Format currency in Indian format (with commas for lakhs/crores)
+function formatIndianCurrency(amount) {
+  const num = parseFloat(amount) || 0;
+  return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 let currentFilter = 'all';
 let currentPaymentStatus = 'all';
 let customFrom = null;
@@ -16,11 +22,11 @@ async function loadDashboard() {
   // Calculate statistics
   const stats = calculateStats(filtered);
 
-  // Update stat cards
+  // Update stat cards with formatted numbers
   document.getElementById('total-estimates').textContent = stats.count;
-  document.getElementById('total-amount').textContent = `₹${stats.totalAmount.toFixed(2)}`;
-  document.getElementById('advanced-payment-total').textContent = `₹${stats.advancedPayment.toFixed(2)}`;
-  document.getElementById('pending-amount').textContent = `₹${stats.pendingAmount.toFixed(2)}`;
+  document.getElementById('total-amount').textContent = formatIndianCurrency(stats.totalAmount);
+  document.getElementById('advanced-payment-total').textContent = formatIndianCurrency(stats.advancedPayment);
+  document.getElementById('pending-amount').textContent = formatIndianCurrency(stats.pendingAmount);
 
   // Load estimates table
   loadDashboardEstimates(filtered);
@@ -144,16 +150,24 @@ function loadDashboardEstimates(estimates) {
       statusClass = 'status-pending';
     }
 
+    // Format date as DD/MM/YYYY
+    const dateObj = new Date(est.estimate_date);
+    const formattedDate = dateObj.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+
     return `
       <tr>
-        <td>${new Date(est.estimate_date).toLocaleDateString('en-IN')}</td>
-        <td><strong>${est.estimate_number}</strong></td>
-        <td>${est.bill_to_name}</td>
-        <td>₹${total.toFixed(2)}</td>
-        <td style="color: #48bb78;">₹${advanced.toFixed(2)}</td>
-        <td style="color: ${pending > 0 ? '#f56565' : '#48bb78'}; font-weight: 600;">₹${pending.toFixed(2)}</td>
-        <td><span class="status-badge ${statusClass}">${status}</span></td>
-        <td>
+        <td style="white-space: nowrap;">${formattedDate}</td>
+        <td style="white-space: nowrap;"><strong>${est.estimate_number}</strong></td>
+        <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${est.bill_to_name}">${est.bill_to_name}</td>
+        <td style="text-align: right; white-space: nowrap;">₹${total.toFixed(2)}</td>
+        <td style="text-align: right; color: #48bb78; white-space: nowrap;">₹${advanced.toFixed(2)}</td>
+        <td style="text-align: right; color: ${pending > 0 ? '#f56565' : '#48bb78'}; font-weight: 600; white-space: nowrap;">₹${pending.toFixed(2)}</td>
+        <td style="text-align: center;"><span class="status-badge ${statusClass}">${status}</span></td>
+        <td style="white-space: nowrap;">
           <button class="btn btn-small btn-edit" onclick="viewEstimateDetails(${est.id})">View</button>
           <button class="btn btn-small btn-danger" onclick="deleteEstimate(${est.id})">Delete</button>
         </td>
@@ -216,7 +230,7 @@ async function viewEstimateDetails(id) {
 
   const details = `
 ESTIMATE: ${estimate.estimate_number}
-Date: ${new Date(estimate.estimate_date).toLocaleDateString('en-IN')}
+Date: ${new Date(estimate.estimate_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
 
 CUSTOMER:
 ${estimate.bill_to_name}

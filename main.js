@@ -32,11 +32,11 @@ function initDatabase() {
 function initializeDefaultData() {
   data = {
     items: [
-      { id: 1, name: 'G.I. Chain Link Fence 12 SWG', description: '3.5" Mesh Size | 5\' Height | 10 Bundles', hsn_code: '7314', rate: 7350, unit: 'kg' },
-      { id: 2, name: 'G.I. Chain Link Fence 10 SWG', description: '2" Mesh Size | 7\' Height | 1 Bundle', hsn_code: '7314', rate: 7350, unit: 'kg' },
-      { id: 3, name: 'G.I. Barbed Wire 14 X 14 SWG', description: 'TATA Wiron | 1 Bundle', hsn_code: '7313', rate: 12800, unit: 'kg' },
-      { id: 4, name: 'G.I. WIRE', description: '12 gauge', hsn_code: '7217', rate: 7100, unit: 'kg' },
-      { id: 5, name: 'G.I. WIRE', description: 'Micon 16 gauge | 25 kg x 1 Coil', hsn_code: '7217', rate: 9400, unit: 'kg' }
+      { id: 1, name: 'G.I. Chain Link Fence 12 SWG', description: '3.5" Mesh Size | 5\' Height | 10 Bundles', hsn_code: '7314', rate: 7350, unit: 'kg', available_qty: 0 },
+      { id: 2, name: 'G.I. Chain Link Fence 10 SWG', description: '2" Mesh Size | 7\' Height | 1 Bundle', hsn_code: '7314', rate: 7350, unit: 'kg', available_qty: 0 },
+      { id: 3, name: 'G.I. Barbed Wire 14 X 14 SWG', description: 'TATA Wiron | 1 Bundle', hsn_code: '7313', rate: 12800, unit: 'kg', available_qty: 0 },
+      { id: 4, name: 'G.I. WIRE', description: '12 gauge', hsn_code: '7217', rate: 7100, unit: 'kg', available_qty: 0 },
+      { id: 5, name: 'G.I. WIRE', description: 'Micon 16 gauge | 25 kg x 1 Coil', hsn_code: '7217', rate: 9400, unit: 'kg', available_qty: 0 }
     ],
     customers: [],
     estimates: [],
@@ -104,7 +104,8 @@ ipcMain.handle('add-item', (event, item) => {
     description: item.description || '',
     hsn_code: item.hsn_code || '',
     rate: parseFloat(item.rate),
-    unit: item.unit
+    unit: item.unit,
+    available_qty: parseFloat(item.available_qty) || 0
   };
   data.items.push(newItem);
   saveData();
@@ -121,7 +122,8 @@ ipcMain.handle('update-item', (event, item) => {
       description: item.description || '',
       hsn_code: item.hsn_code || '',
       rate: parseFloat(item.rate),
-      unit: item.unit
+      unit: item.unit,
+      available_qty: parseFloat(item.available_qty) || 0
     };
     saveData();
   }
@@ -162,6 +164,7 @@ ipcMain.handle('save-estimate', (event, estimateData) => {
     items: estimateData.items.map(item => ({
       item_name: item.item_name,
       description: item.description || '',
+      hsn_code: item.hsn_code || '',
       quantity: parseFloat(item.quantity),
       unit: item.unit,
       rate: parseFloat(item.rate),
@@ -169,6 +172,14 @@ ipcMain.handle('save-estimate', (event, estimateData) => {
     })),
     created_at: new Date().toISOString()
   };
+
+  // Reduce inventory for each item in the estimate
+  estimateData.items.forEach(estItem => {
+    const masterItem = data.items.find(i => i.name === estItem.item_name);
+    if (masterItem && masterItem.available_qty !== undefined) {
+      masterItem.available_qty = Math.max(0, (masterItem.available_qty || 0) - parseFloat(estItem.quantity));
+    }
+  });
 
   data.estimates.push(newEstimate);
   saveData();
@@ -192,9 +203,11 @@ ipcMain.handle('get-next-estimate-number', () => {
   return 'EST-000001';
 });
 
-// Get printers
-ipcMain.handle('get-printers', () => {
-  return mainWindow.webContents.getPrinters();
+// Get printers - Use print dialog instead since getPrinters was deprecated
+ipcMain.handle('get-printers', async () => {
+  // In newer Electron versions, getPrinters() is no longer available
+  // Return a default printer to allow the print dialog to handle printer selection
+  return [{ name: 'System Default', isDefault: true }];
 });
 
 // Print estimate
@@ -212,8 +225,8 @@ ipcMain.handle('print-estimate', (event, htmlContent, printerName) => {
 
     printWindow.webContents.on('did-finish-load', () => {
       const options = {
-        silent: true,
-        deviceName: printerName,
+        silent: false, // Show print dialog to let user select printer
+        printBackground: true,
         pageSize: 'A4',
         margins: {
           marginType: 'custom',
@@ -225,7 +238,7 @@ ipcMain.handle('print-estimate', (event, htmlContent, printerName) => {
       };
 
       printWindow.webContents.print(options, (success, errorType) => {
-        if (!success) {
+        if (!success && errorType !== 'cancelled') {
           reject(errorType);
         } else {
           resolve({ success: true });

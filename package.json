@@ -2,7 +2,7 @@
   "name": "estimate-app",
   "version": "1.0.0",
   "description": "Simple Estimate Generator with Zebra Printer Support",
-  "main": "loader.js",
+  "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
@@ -23,15 +23,21 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "electron": "^25.9.8",
+    "electron": "^39.2.7",
     "electron-builder": "^24.9.1"
   },
   "build": {
     "appId": "com.estimate.generator",
     "productName": "Estimate Generator",
     "win": {
-      "target": "nsis",
-      "icon": "build/icon.ico"
+      "target": ["portable", "nsis"],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "directories": {
       "output": "dist"

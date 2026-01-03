@@ -33,17 +33,6 @@
 
       <!-- New Estimate View -->
       <div id="new-estimate-view" class="view active">
-        <div class="header">
-          <h1>Create New Estimate</h1>
-          <div class="actions">
-            <button id="save-estimate-btn" class="btn btn-primary">Save Estimate</button>
-            <button id="save-and-print-btn" class="btn btn-primary">💾 Save & Print</button>
-            <button id="preview-estimate-btn" class="btn btn-secondary">📄 Preview</button>
-            <button id="email-pdf-btn" class="btn btn-secondary">📧 Email PDF</button>
-            <button id="download-pdf-btn" class="btn btn-secondary">💾 Download PDF</button>
-          </div>
-        </div>
-
         <div class="form-container">
           <!-- Combined Section - Bill To (Left) and Estimate Info (Right) -->
           <div class="form-section">
@@ -69,13 +58,15 @@
                   <input type="text" id="customer-search" placeholder="Type customer name to search..." list="customer-list">
                   <datalist id="customer-list"></datalist>
                 </div>
-                <div class="form-group compact">
-                  <label>Estimate Number</label>
-                  <input type="text" id="estimate-number" readonly>
-                </div>
-                <div class="form-group compact">
-                  <label>Date</label>
-                  <input type="date" id="estimate-date">
+                <div class="form-row-inline">
+                  <div class="form-group compact" style="flex: 1;">
+                    <label>Estimate Number</label>
+                    <input type="text" id="estimate-number">
+                  </div>
+                  <div class="form-group compact" style="flex: 1;">
+                    <label>Date</label>
+                    <input type="date" id="estimate-date">
+                  </div>
                 </div>
               </div>
             </div>
@@ -91,13 +82,13 @@
             <table class="items-table" id="items-table">
               <thead>
                 <tr>
-                  <th style="width: 4%">#</th>
-                  <th style="width: 32%">Item & Description</th>
-                  <th style="width: 8%">Qty</th>
-                  <th style="width: 8%">Unit</th>
-                  <th style="width: 16%">Net Rate<br>(Inclusive GST)</th>
-                  <th style="width: 18%">Amount</th>
-                  <th style="width: 14%">Action</th>
+                  <th style="width: 4%; text-align: center;">#</th>
+                  <th style="width: 34%; text-align: left;">Item & Description</th>
+                  <th style="width: 8%; text-align: center;">Qty</th>
+                  <th style="width: 8%; text-align: center;">Unit</th>
+                  <th style="width: 14%; text-align: right;">Rate (Incl.GST)</th>
+                  <th style="width: 14%; text-align: right;">Amount</th>
+                  <th style="width: 10%; text-align: center;">Action</th>
                 </tr>
               </thead>
               <tbody id="items-tbody">
@@ -107,35 +98,40 @@
           </div>
 
           <!-- Totals -->
-          <div class="totals-section">
+          <div class="totals-section compact">
             <div class="totals-left">
               <div class="total-items-kg">
-                <strong>Items in Total:</strong> <span id="total-kg">0.00 kg</span>
+                <strong>Total:</strong> <span id="total-kg">0.00 kg</span>
               </div>
-              <div class="total-words" id="total-words">Total In Words: Indian Rupee Zero Only</div>
-              <div class="signature-area">
-                <label>Authorized Signature</label>
-                <div class="signature-line"></div>
-              </div>
+              <div class="total-words" id="total-words">Zero Rupees Only</div>
             </div>
             <div class="totals-right">
               <div class="total-row">
-                <span class="total-label">Sub Total <span class="tax-note">(Tax Inclusive)</span></span>
+                <span class="total-label">Sub Total</span>
                 <span class="total-value" id="sub-total">₹0.00</span>
               </div>
               <div class="total-row">
-                <span class="total-label">Advanced Payment / Previous Balance</span>
-                <input type="number" id="advanced-payment" class="total-input" value="0" step="0.01">
+                <span class="total-label">Advance/Balance</span>
+                <input type="number" id="advanced-payment" class="total-input" value="" placeholder="0" step="0.01">
               </div>
               <div class="total-row">
-                <span class="total-label">Rounding <button id="auto-round-btn" class="auto-round-btn" title="Auto-calculate rounding">Auto</button></span>
-                <input type="number" id="rounding" class="total-input" value="0" step="0.01">
+                <span class="total-label">Rounding <button id="auto-round-btn" class="auto-round-btn">Auto</button></span>
+                <input type="number" id="rounding" class="total-input" value="" placeholder="0" step="0.01">
               </div>
               <div class="total-row grand-total">
-                <span class="total-label">Total</span>
+                <span class="total-label">Grand Total</span>
                 <span class="total-value" id="grand-total">₹0.00</span>
               </div>
             </div>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="form-actions">
+            <button id="save-estimate-btn" class="btn btn-primary">Save Estimate</button>
+            <button id="save-and-print-btn" class="btn btn-primary">💾 Save & Print</button>
+            <button id="preview-estimate-btn" class="btn btn-secondary">📄 Preview</button>
+            <button id="email-pdf-btn" class="btn btn-secondary">📧 Email PDF</button>
+            <button id="download-pdf-btn" class="btn btn-secondary">💾 Download PDF</button>
           </div>
         </div>
       </div>
@@ -150,9 +146,8 @@
               <button class="filter-btn" data-filter="today">Today</button>
               <button class="filter-btn" data-filter="week">This Week</button>
               <button class="filter-btn" data-filter="month">This Month</button>
-              <button class="filter-btn" data-filter="custom">Custom Range</button>
+              <button class="filter-btn" data-filter="custom">Custom</button>
             </div>
-            <button id="delete-all-estimates-btn" class="btn btn-danger">🗑️ Delete All</button>
           </div>
         </div>
 
@@ -162,14 +157,6 @@
           <label>To:</label>
           <input type="date" id="filter-to">
           <button class="btn btn-small" id="apply-custom-filter">Apply</button>
-        </div>
-
-        <div class="payment-status-filter">
-          <label>Payment Status:</label>
-          <button class="status-filter-btn active" data-status="all">All</button>
-          <button class="status-filter-btn" data-status="completed">Completed</button>
-          <button class="status-filter-btn" data-status="partial">Partial Payment</button>
-          <button class="status-filter-btn" data-status="pending">Pending</button>
         </div>
 
         <div class="dashboard-stats">
@@ -193,7 +180,7 @@
             <div class="stat-icon">💵</div>
             <div class="stat-content">
               <h3 id="advanced-payment-total">₹0.00</h3>
-              <p>Advanced Payments</p>
+              <p>Advanced Pay</p>
             </div>
           </div>
 
@@ -208,23 +195,29 @@
 
         <div class="dashboard-chart">
           <div class="estimates-header">
-            <h2>All Estimates</h2>
-            <div class="search-box">
+            <div class="search-box" style="flex: 1;">
               <input type="text" id="estimate-search" placeholder="🔍 Search by customer name, estimate number...">
             </div>
           </div>
+          <div class="payment-status-filter">
+            <label>Status:</label>
+            <button class="status-filter-btn active" data-status="all">All</button>
+            <button class="status-filter-btn" data-status="completed">Completed</button>
+            <button class="status-filter-btn" data-status="partial">Partial</button>
+            <button class="status-filter-btn" data-status="pending">Pending</button>
+          </div>
           <div class="table-container">
-            <table class="data-table">
+            <table class="data-table" style="table-layout: fixed; width: 100%;">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Estimate No.</th>
-                  <th>Customer</th>
-                  <th>Total</th>
-                  <th>Advanced</th>
-                  <th>Pending</th>
-                  <th>Status</th>
-                  <th>Actions</th>
+                  <th style="width: 9%; text-align: left;">Date</th>
+                  <th style="width: 10%; text-align: left;">Est.No</th>
+                  <th style="width: 18%; text-align: left;">Customer</th>
+                  <th style="width: 12%; text-align: right;">Total</th>
+                  <th style="width: 12%; text-align: right;">Advanced</th>
+                  <th style="width: 12%; text-align: right;">Pending</th>
+                  <th style="width: 10%; text-align: center;">Status</th>
+                  <th style="width: 17%; text-align: center;">Actions</th>
                 </tr>
               </thead>
               <tbody id="dashboard-estimates">
@@ -265,14 +258,15 @@
           <button id="add-new-item-btn" class="btn btn-primary">+ Add New Item</button>
         </div>
         <div class="table-container">
-          <table class="data-table">
+          <table class="data-table" style="table-layout: fixed; width: 100%;">
             <thead>
               <tr>
-                <th>Item Name</th>
-                <th>Description</th>
-                <th>Rate</th>
-                <th>Unit</th>
-                <th>Actions</th>
+                <th style="width: 22%; text-align: left;">Item Name</th>
+                <th style="width: 30%; text-align: left;">Description</th>
+                <th style="width: 12%; text-align: right;">Rate</th>
+                <th style="width: 8%; text-align: center;">Unit</th>
+                <th style="width: 10%; text-align: right;">Avail Qty</th>
+                <th style="width: 18%; text-align: center;">Actions</th>
               </tr>
             </thead>
             <tbody id="items-master-tbody">
@@ -289,16 +283,16 @@
           <button id="add-customer-btn" class="btn btn-primary">+ Add Customer</button>
         </div>
         <div class="table-container">
-          <table class="data-table">
+          <table class="data-table" style="table-layout: fixed; width: 100%;">
             <thead>
               <tr>
-                <th>Customer Name</th>
-                <th>Address</th>
-                <th>Total Estimates</th>
-                <th>Total Amount</th>
-                <th>Paid</th>
-                <th>Pending</th>
-                <th>Actions</th>
+                <th style="width: 18%; text-align: left;">Customer Name</th>
+                <th style="width: 28%; text-align: left;">Address</th>
+                <th style="width: 8%; text-align: center;">Estimates</th>
+                <th style="width: 13%; text-align: right;">Total</th>
+                <th style="width: 11%; text-align: right;">Paid</th>
+                <th style="width: 11%; text-align: right;">Pending</th>
+                <th style="width: 11%; text-align: center;">Actions</th>
               </tr>
             </thead>
             <tbody id="customers-tbody">
@@ -379,46 +373,45 @@
         <div class="form-row">
           <div class="form-group">
             <label>City</label>
-            <select id="modal-customer-city">
-              <option value="">Select City</option>
-              <option value="Chennai">Chennai</option>
-              <option value="Coimbatore">Coimbatore</option>
-              <option value="Madurai">Madurai</option>
-              <option value="Tiruchirappalli">Tiruchirappalli</option>
-              <option value="Salem">Salem</option>
-              <option value="Tirunelveli">Tirunelveli</option>
-              <option value="Tiruppur">Tiruppur</option>
-              <option value="Erode">Erode</option>
-              <option value="Vellore">Vellore</option>
-              <option value="Thoothukudi">Thoothukudi</option>
-              <option value="Thanjavur">Thanjavur</option>
-              <option value="Dindigul">Dindigul</option>
-              <option value="Ranipet">Ranipet</option>
-              <option value="Nagercoil">Nagercoil</option>
-              <option value="Kumbakonam">Kumbakonam</option>
-              <option value="Karaikudi">Karaikudi</option>
-              <option value="Other">Other</option>
-            </select>
+            <input type="text" id="modal-customer-city" list="city-list" placeholder="Type or select city">
+            <datalist id="city-list">
+              <option value="Chennai">
+              <option value="Coimbatore">
+              <option value="Madurai">
+              <option value="Tiruchirappalli">
+              <option value="Salem">
+              <option value="Tirunelveli">
+              <option value="Tiruppur">
+              <option value="Erode">
+              <option value="Vellore">
+              <option value="Thoothukudi">
+              <option value="Thanjavur">
+              <option value="Dindigul">
+              <option value="Ranipet">
+              <option value="Nagercoil">
+              <option value="Kumbakonam">
+              <option value="Karaikudi">
+            </datalist>
           </div>
           <div class="form-group">
             <label>State</label>
-            <select id="modal-customer-state">
-              <option value="Tamil Nadu">Tamil Nadu</option>
-              <option value="Andhra Pradesh">Andhra Pradesh</option>
-              <option value="Karnataka">Karnataka</option>
-              <option value="Kerala">Kerala</option>
-              <option value="Telangana">Telangana</option>
-              <option value="Maharashtra">Maharashtra</option>
-              <option value="Gujarat">Gujarat</option>
-              <option value="Rajasthan">Rajasthan</option>
-              <option value="Uttar Pradesh">Uttar Pradesh</option>
-              <option value="West Bengal">West Bengal</option>
-              <option value="Other">Other</option>
-            </select>
+            <input type="text" id="modal-customer-state" list="state-list" value="Tamil Nadu" placeholder="Type or select state">
+            <datalist id="state-list">
+              <option value="Tamil Nadu">
+              <option value="Andhra Pradesh">
+              <option value="Karnataka">
+              <option value="Kerala">
+              <option value="Telangana">
+              <option value="Maharashtra">
+              <option value="Gujarat">
+              <option value="Rajasthan">
+              <option value="Uttar Pradesh">
+              <option value="West Bengal">
+            </datalist>
           </div>
           <div class="form-group">
             <label>Country</label>
-            <input type="text" id="modal-customer-country" value="India" readonly>
+            <input type="text" id="modal-customer-country" value="India" placeholder="Country">
           </div>
         </div>
         <div class="form-row">
@@ -444,7 +437,7 @@
         <div class="form-row">
           <div class="form-group">
             <label>Opening Balance (Optional)</label>
-            <input type="number" id="modal-customer-opening-balance" step="0.01" value="0" placeholder="0.00">
+            <input type="number" id="modal-customer-opening-balance" step="0.01" value="" placeholder="0.00">
           </div>
         </div>
       </div>
@@ -494,7 +487,7 @@
           </div>
           <div class="form-group">
             <label>Available Qty (Inventory)</label>
-            <input type="number" id="modal-item-available-qty" step="0.01" value="0" placeholder="Stock quantity">
+            <input type="number" id="modal-item-available-qty" step="0.01" value="" placeholder="0">
           </div>
         </div>
       </div>
