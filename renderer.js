@@ -1,40 +1,44 @@
-// Get electron modules
+/**
+ * Estimate Generator - Renderer Process
+ * Handles all UI interactions, form management, and PDF generation
+ */
+
+// Electron and PDF modules
 const { ipcRenderer } = require('electron');
 const { jsPDF } = require('jspdf');
 require('jspdf-autotable');
 
-// Debug logging
-console.log('Renderer loaded, ipcRenderer:', typeof ipcRenderer);
-
-// State
+// ============================================================================
+// STATE MANAGEMENT
+// ============================================================================
 let masterItems = [];
 let currentEstimateItems = [];
 let currentView = 'new-estimate';
-let editingEstimateId = null; // Track if we're editing an existing estimate
+let editingEstimateId = null;
+let inputPollingInterval = null;
+let isSavingAndPrinting = false;
 
-// Initialize
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    console.log('Initializing app...');
     await loadMasterItems();
-    console.log('Master items loaded:', masterItems.length);
     await initializeNewEstimate();
-    console.log('New estimate initialized');
     setupEventListeners();
     setupDashboardListeners();
     setupCustomerListeners();
     setupItemsTableDelegation();
     setupWindowFocusFix();
     setupTotalsListeners();
-    console.log('All setup complete');
   } catch (error) {
     console.error('Initialization error:', error);
   }
 });
 
-// SIMPLE POLLING APPROACH - No complex event listeners that can freeze
-// This checks input values every 100ms and updates accordingly
-let inputPollingInterval = null;
+// ============================================================================
+// INPUT POLLING - Prevents input freezing issues
+// ============================================================================
 
 function setupWindowFocusFix() {
   // Start polling when app loads
@@ -178,7 +182,6 @@ function setupItemsTableDelegation() {
       // Check if this matches a master item (user selected from dropdown)
       const masterItem = masterItems.find(i => i.name === itemName);
       if (masterItem) {
-        console.log('Input event: Found master item:', masterItem.name);
         handleItemNameSelection(index, itemName);
       } else {
         // User is typing custom item name
@@ -210,7 +213,6 @@ function setupItemsTableDelegation() {
       // Check if this matches a master item
       const masterItem = masterItems.find(i => i.name === itemName);
       if (masterItem) {
-        console.log('Change event: Found master item:', masterItem.name);
         handleItemNameSelection(index, itemName);
       }
     }
@@ -232,7 +234,6 @@ function setupItemsTableDelegation() {
       if (masterItem && currentEstimateItems[index]) {
         // Only auto-fill if rate is still 0 (not already filled)
         if (currentEstimateItems[index].rate === 0) {
-          console.log('Focusout event: Auto-filling item:', masterItem.name);
           handleItemNameSelection(index, itemName);
         }
       }
@@ -623,7 +624,6 @@ function addItemRow() {
       if (itemName) {
         const masterItem = masterItems.find(i => i.name === itemName);
         if (masterItem) {
-          console.log('Direct input listener: Found item:', masterItem.name, 'Rate:', masterItem.rate);
           handleItemNameSelection(index, itemName);
         }
       }
@@ -635,7 +635,6 @@ function addItemRow() {
       if (itemName) {
         const masterItem = masterItems.find(i => i.name === itemName);
         if (masterItem) {
-          console.log('Direct change listener: Found item:', masterItem.name);
           handleItemNameSelection(index, itemName);
         }
       }
@@ -738,12 +737,7 @@ function updateItemDescription(index, value) {
 function handleItemNameSelection(index, itemName) {
   // Find matching master item
   const item = masterItems.find(i => i.name === itemName);
-  if (!item) {
-    console.log('Item not found in master:', itemName);
-    return;
-  }
-
-  console.log('Auto-filling item:', item.name, 'Rate:', item.rate);
+  if (!item) return;
 
   // Auto-fill the item details from master
   currentEstimateItems[index].item_name = item.name;
@@ -756,10 +750,7 @@ function handleItemNameSelection(index, itemName) {
 
   // Find the row by ID
   const row = document.getElementById(`item-row-${index}`);
-  if (!row) {
-    console.log('Row not found for index:', index);
-    return;
-  }
+  if (!row) return;
 
   // Update description input with HSN
   const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
@@ -775,7 +766,6 @@ function handleItemNameSelection(index, itemName) {
 
   if (rateInput) {
     rateInput.value = item.rate || 0;
-    console.log('Set rate input to:', item.rate);
   }
   if (unitSelect) unitSelect.value = item.unit || 'kg';
   // Don't auto-fill qty - user will enter it manually
@@ -996,9 +986,6 @@ async function saveEstimate() {
     alert('Error saving estimate: ' + error.message);
   }
 }
-
-// Flag to prevent duplicate saves
-let isSavingAndPrinting = false;
 
 // Save and Print
 async function saveAndPrint() {

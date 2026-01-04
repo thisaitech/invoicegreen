@@ -1,7 +1,7 @@
 {
-  "name": "estimate-app",
+  "name": "estimate-generator",
   "version": "1.0.0",
-  "description": "Simple Estimate Generator with Zebra Printer Support",
+  "description": "Estimate Generator - Create, manage, and print professional estimates",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -10,11 +10,11 @@
   "keywords": [
     "estimate",
     "invoice",
-    "zebra",
-    "printer"
+    "billing",
+    "electron"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Invoice Green",
+  "license": "MIT",
   "dependencies": {
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.8.2"
