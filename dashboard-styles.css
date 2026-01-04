@@ -454,3 +454,23 @@
     font-size: 11px;
   }
 }
+
+/* Estimate Link Style */
+.estimate-link {
+  color: #667eea;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.estimate-link:hover {
+  color: #764ba2;
+  text-decoration: underline;
+}
+
+/* Action buttons in table */
+.btn-small {
+  padding: 5px 10px;
+  font-size: 11px;
+  margin: 1px;
+}

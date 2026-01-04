@@ -186,21 +186,113 @@ ipcMain.handle('save-estimate', (event, estimateData) => {
   return newEstimate;
 });
 
+// Update existing estimate
+ipcMain.handle('update-estimate', (event, estimateData) => {
+  const index = data.estimates.findIndex(e => e.id === estimateData.id);
+  if (index === -1) {
+    throw new Error('Estimate not found');
+  }
+
+  const oldEstimate = data.estimates[index];
+
+  // Restore inventory from old estimate items
+  if (oldEstimate.items) {
+    oldEstimate.items.forEach(oldItem => {
+      const masterItem = data.items.find(i => i.name === oldItem.item_name);
+      if (masterItem && masterItem.available_qty !== undefined) {
+        masterItem.available_qty = (masterItem.available_qty || 0) + parseFloat(oldItem.quantity);
+      }
+    });
+  }
+
+  // Update the estimate
+  const updatedEstimate = {
+    id: estimateData.id,
+    estimate_number: estimateData.estimate_number,
+    estimate_date: estimateData.estimate_date,
+    place_of_supply: estimateData.place_of_supply || '',
+    bill_to_name: estimateData.bill_to_name,
+    bill_to_address: estimateData.bill_to_address || '',
+    sub_total: parseFloat(estimateData.sub_total),
+    advanced_payment: parseFloat(estimateData.advanced_payment) || 0,
+    rounding: parseFloat(estimateData.rounding) || 0,
+    total: parseFloat(estimateData.total),
+    total_in_words: estimateData.total_in_words,
+    items: estimateData.items.map(item => ({
+      item_name: item.item_name,
+      description: item.description || '',
+      hsn_code: item.hsn_code || '',
+      quantity: parseFloat(item.quantity),
+      unit: item.unit,
+      rate: parseFloat(item.rate),
+      amount: parseFloat(item.amount)
+    })),
+    created_at: oldEstimate.created_at,
+    updated_at: new Date().toISOString()
+  };
+
+  // Reduce inventory for new items
+  estimateData.items.forEach(estItem => {
+    const masterItem = data.items.find(i => i.name === estItem.item_name);
+    if (masterItem && masterItem.available_qty !== undefined) {
+      masterItem.available_qty = Math.max(0, (masterItem.available_qty || 0) - parseFloat(estItem.quantity));
+    }
+  });
+
+  data.estimates[index] = updatedEstimate;
+  saveData();
+  return updatedEstimate;
+});
+
 // Get next estimate number
 ipcMain.handle('get-next-estimate-number', () => {
-  if (data.estimates.length === 0) {
-    return 'EST-000001';
+  // Always calculate from saved estimates to ensure accuracy
+  let maxNum = 0;
+  if (data.estimates && data.estimates.length > 0) {
+    data.estimates.forEach(est => {
+      if (est.estimate_number) {
+        const match = est.estimate_number.match(/(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1]);
+          if (num > maxNum) maxNum = num;
+        }
+      }
+    });
   }
 
-  const lastEstimate = data.estimates[data.estimates.length - 1];
-  const match = lastEstimate.estimate_number.match(/(\d+)$/);
+  // Next number is max + 1
+  const nextNum = maxNum + 1;
 
-  if (match) {
-    const nextNum = parseInt(match[1]) + 1;
-    return `EST-${String(nextNum).padStart(6, '0')}`;
+  // Store it
+  data.nextEstimateNumber = nextNum;
+  saveData();
+
+  console.log('Get next estimate number:', nextNum, 'Max found:', maxNum);
+  return `EST-${String(nextNum).padStart(3, '0')}`;
+});
+
+// Increment estimate number after save - this is called AFTER save-estimate
+ipcMain.handle('increment-estimate-number', () => {
+  // Recalculate from saved estimates (save-estimate already added the new one)
+  let maxNum = 0;
+  if (data.estimates && data.estimates.length > 0) {
+    data.estimates.forEach(est => {
+      if (est.estimate_number) {
+        const match = est.estimate_number.match(/(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1]);
+          if (num > maxNum) maxNum = num;
+        }
+      }
+    });
   }
 
-  return 'EST-000001';
+  // Next available is max + 1
+  data.nextEstimateNumber = maxNum + 1;
+  saveData();
+
+  console.log('Increment estimate number. Max:', maxNum, 'Next:', data.nextEstimateNumber);
+  return data.nextEstimateNumber;
 });
 
 // Get printers - Use print dialog instead since getPrinters was deprecated
@@ -215,36 +307,44 @@ ipcMain.handle('print-estimate', (event, htmlContent, printerName) => {
   return new Promise((resolve, reject) => {
     const printWindow = new BrowserWindow({
       show: false,
+      width: 800,
+      height: 600,
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false
+        nodeIntegration: false,
+        contextIsolation: true
       }
     });
 
     printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
 
     printWindow.webContents.on('did-finish-load', () => {
-      const options = {
-        silent: false, // Show print dialog to let user select printer
-        printBackground: true,
-        pageSize: 'A4',
-        margins: {
-          marginType: 'custom',
-          top: 0.5,
-          bottom: 0.5,
-          left: 0.5,
-          right: 0.5
-        }
-      };
+      // Small delay to ensure content is fully rendered
+      setTimeout(() => {
+        const options = {
+          silent: false,
+          printBackground: true,
+          pageSize: 'A4',
+          margins: {
+            marginType: 'default'
+          }
+        };
 
-      printWindow.webContents.print(options, (success, errorType) => {
-        if (!success && errorType !== 'cancelled') {
-          reject(errorType);
-        } else {
-          resolve({ success: true });
-        }
-        printWindow.close();
-      });
+        printWindow.webContents.print(options, (success, errorType) => {
+          printWindow.close();
+          if (success) {
+            resolve({ success: true });
+          } else if (errorType === 'cancelled') {
+            resolve({ success: false, cancelled: true });
+          } else {
+            reject(new Error(errorType || 'Print failed'));
+          }
+        });
+      }, 500);
+    });
+
+    printWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      printWindow.close();
+      reject(new Error(`Failed to load print content: ${errorDescription}`));
     });
   });
 });

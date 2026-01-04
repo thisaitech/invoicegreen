@@ -76,7 +76,6 @@
           <div class="form-section">
             <div class="section-header">
               <h3>Items</h3>
-              <button id="add-item-row-btn" class="btn btn-small">+ Add Item</button>
             </div>
 
             <table class="items-table" id="items-table">
@@ -95,6 +94,9 @@
                 <!-- Items will be added here -->
               </tbody>
             </table>
+            <div style="text-align: left; margin-top: 8px;">
+              <button id="add-item-row-btn" class="btn btn-small">+ Add Item</button>
+            </div>
           </div>
 
           <!-- Totals -->
@@ -130,7 +132,6 @@
             <button id="save-estimate-btn" class="btn btn-primary">Save Estimate</button>
             <button id="save-and-print-btn" class="btn btn-primary">💾 Save & Print</button>
             <button id="preview-estimate-btn" class="btn btn-secondary">📄 Preview</button>
-            <button id="email-pdf-btn" class="btn btn-secondary">📧 Email PDF</button>
             <button id="download-pdf-btn" class="btn btn-secondary">💾 Download PDF</button>
           </div>
         </div>
@@ -169,26 +170,26 @@
           </div>
 
           <div class="stat-card">
-            <div class="stat-icon">💰</div>
-            <div class="stat-content">
-              <h3 id="total-amount">₹0.00</h3>
-              <p>Total Amount</p>
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">💵</div>
-            <div class="stat-content">
-              <h3 id="advanced-payment-total">₹0.00</h3>
-              <p>Advanced Pay</p>
-            </div>
-          </div>
-
-          <div class="stat-card">
             <div class="stat-icon">⏳</div>
             <div class="stat-content">
-              <h3 id="pending-amount">₹0.00</h3>
-              <p>Pending Amount</p>
+              <h3 id="pending-estimates">0</h3>
+              <p>Pending</p>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">🔄</div>
+            <div class="stat-content">
+              <h3 id="partial-estimates">0</h3>
+              <p>Partial</p>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-content">
+              <h3 id="completed-estimates">0</h3>
+              <p>Completed</p>
             </div>
           </div>
         </div>
@@ -206,18 +207,18 @@
             <button class="status-filter-btn" data-status="partial">Partial</button>
             <button class="status-filter-btn" data-status="pending">Pending</button>
           </div>
-          <div class="table-container">
-            <table class="data-table" style="table-layout: fixed; width: 100%;">
+          <div class="table-container" style="overflow-x: auto;">
+            <table class="data-table" style="table-layout: fixed; width: 100%; min-width: 800px;">
               <thead>
                 <tr>
-                  <th style="width: 9%; text-align: left;">Date</th>
-                  <th style="width: 10%; text-align: left;">Est.No</th>
-                  <th style="width: 18%; text-align: left;">Customer</th>
+                  <th style="width: 10%; text-align: left;">Date</th>
+                  <th style="width: 9%; text-align: left;">Est.No</th>
+                  <th style="width: 16%; text-align: left;">Customer</th>
                   <th style="width: 12%; text-align: right;">Total</th>
-                  <th style="width: 12%; text-align: right;">Advanced</th>
-                  <th style="width: 12%; text-align: right;">Pending</th>
-                  <th style="width: 10%; text-align: center;">Status</th>
-                  <th style="width: 17%; text-align: center;">Actions</th>
+                  <th style="width: 10%; text-align: right;">Advanced</th>
+                  <th style="width: 10%; text-align: right;">Pending</th>
+                  <th style="width: 9%; text-align: center;">Status</th>
+                  <th style="width: 24%; text-align: center;">Actions</th>
                 </tr>
               </thead>
               <tbody id="dashboard-estimates">
@@ -494,6 +495,25 @@
       <div class="modal-footer">
         <button class="btn btn-cancel close">Cancel</button>
         <button id="save-item-btn" class="btn btn-save">Save Item</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Estimate Preview Modal -->
+  <div id="estimate-preview-modal" class="modal">
+    <div class="modal-content" style="width: 90%; max-width: 900px; height: 90%;">
+      <div class="modal-header">
+        <h2>Estimate Preview</h2>
+        <span class="close" onclick="document.getElementById('estimate-preview-modal').classList.remove('active')">&times;</span>
+      </div>
+      <div class="modal-body" style="height: calc(100% - 120px); padding: 0;">
+        <iframe id="estimate-preview-frame" style="width: 100%; height: 100%; border: none;"></iframe>
+      </div>
+      <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button class="btn" onclick="editEstimate(parseInt(document.getElementById('estimate-preview-modal').dataset.estimateId)); document.getElementById('estimate-preview-modal').classList.remove('active');" style="background: #4299e1; color: white;">Edit</button>
+        <button class="btn" onclick="downloadEstimatePDF(parseInt(document.getElementById('estimate-preview-modal').dataset.estimateId))" style="background: #38a169; color: white;">Download PDF</button>
+        <button class="btn" onclick="printEstimateFromDashboard(parseInt(document.getElementById('estimate-preview-modal').dataset.estimateId))" style="background: #3182ce; color: white;">Print</button>
+        <button class="btn btn-cancel" onclick="document.getElementById('estimate-preview-modal').classList.remove('active')">Close</button>
       </div>
     </div>
   </div>

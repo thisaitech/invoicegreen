@@ -6,6 +6,18 @@ function formatIndianCurrency(amount) {
   return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Format estimate number to 3 digits (EST-001 format)
+function formatEstimateNumber(estNum) {
+  if (!estNum) return estNum;
+  // Extract number from EST-XXXXXX format and convert to 3 digits
+  const match = estNum.match(/EST-(\d+)/);
+  if (match) {
+    const num = parseInt(match[1]);
+    return `EST-${String(num).padStart(3, '0')}`;
+  }
+  return estNum;
+}
+
 let currentFilter = 'all';
 let currentPaymentStatus = 'all';
 let customFrom = null;
@@ -16,17 +28,17 @@ async function loadDashboard() {
   const estimates = await ipcRenderer.invoke('get-estimates');
   let filtered = filterEstimates(estimates, currentFilter, customFrom, customTo);
 
-  // Filter by payment status
-  filtered = filterByPaymentStatus(filtered, currentPaymentStatus);
-
-  // Calculate statistics
+  // Calculate statistics for ALL filtered estimates (before payment status filter)
   const stats = calculateStats(filtered);
 
-  // Update stat cards with formatted numbers
+  // Update stat cards with status counts
   document.getElementById('total-estimates').textContent = stats.count;
-  document.getElementById('total-amount').textContent = formatIndianCurrency(stats.totalAmount);
-  document.getElementById('advanced-payment-total').textContent = formatIndianCurrency(stats.advancedPayment);
-  document.getElementById('pending-amount').textContent = formatIndianCurrency(stats.pendingAmount);
+  document.getElementById('pending-estimates').textContent = stats.pendingCount;
+  document.getElementById('partial-estimates').textContent = stats.partialCount;
+  document.getElementById('completed-estimates').textContent = stats.completedCount;
+
+  // Now filter by payment status for the table display
+  filtered = filterByPaymentStatus(filtered, currentPaymentStatus);
 
   // Load estimates table
   loadDashboardEstimates(filtered);
@@ -95,18 +107,26 @@ function filterEstimates(estimates, filter, from, to) {
 function calculateStats(estimates) {
   const stats = {
     count: estimates.length,
-    totalAmount: 0,
-    advancedPayment: 0,
-    pendingAmount: 0
+    pendingCount: 0,
+    partialCount: 0,
+    completedCount: 0
   };
 
   estimates.forEach(est => {
     const total = parseFloat(est.total) || 0;
     const advanced = parseFloat(est.advanced_payment) || 0;
+    const pending = total - advanced;
 
-    stats.totalAmount += total;
-    stats.advancedPayment += advanced;
-    stats.pendingAmount += (total - advanced);
+    if (pending <= 0) {
+      // Fully paid - completed
+      stats.completedCount++;
+    } else if (advanced > 0 && pending > 0) {
+      // Some payment made - partial
+      stats.partialCount++;
+    } else {
+      // No payment yet - pending
+      stats.pendingCount++;
+    }
   });
 
   return stats;
@@ -158,18 +178,22 @@ function loadDashboardEstimates(estimates) {
       year: 'numeric'
     });
 
+    const displayEstNum = formatEstimateNumber(est.estimate_number);
+
     return `
       <tr>
-        <td style="white-space: nowrap;">${formattedDate}</td>
-        <td style="white-space: nowrap;"><strong>${est.estimate_number}</strong></td>
-        <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${est.bill_to_name}">${est.bill_to_name}</td>
-        <td style="text-align: right; white-space: nowrap;">₹${total.toFixed(2)}</td>
-        <td style="text-align: right; color: #48bb78; white-space: nowrap;">₹${advanced.toFixed(2)}</td>
-        <td style="text-align: right; color: ${pending > 0 ? '#f56565' : '#48bb78'}; font-weight: 600; white-space: nowrap;">₹${pending.toFixed(2)}</td>
-        <td style="text-align: center;"><span class="status-badge ${statusClass}">${status}</span></td>
-        <td style="white-space: nowrap;">
-          <button class="btn btn-small btn-edit" onclick="viewEstimateDetails(${est.id})">View</button>
-          <button class="btn btn-small btn-danger" onclick="deleteEstimate(${est.id})">Delete</button>
+        <td style="white-space: nowrap; font-size: 12px;">${formattedDate}</td>
+        <td style="white-space: nowrap;"><a href="#" class="estimate-link" onclick="openEstimatePreview(${est.id}); return false;"><strong>${displayEstNum}</strong></a></td>
+        <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px;" title="${est.bill_to_name}">${est.bill_to_name}</td>
+        <td style="text-align: right; white-space: nowrap; font-size: 12px;">₹${total.toFixed(2)}</td>
+        <td style="text-align: right; color: #48bb78; white-space: nowrap; font-size: 12px;">₹${advanced.toFixed(2)}</td>
+        <td style="text-align: right; color: ${pending > 0 ? '#f56565' : '#48bb78'}; font-weight: 600; white-space: nowrap; font-size: 12px;">₹${pending.toFixed(2)}</td>
+        <td style="text-align: center;"><span class="status-badge ${statusClass}" style="font-size: 10px; padding: 3px 6px;">${status}</span></td>
+        <td style="white-space: nowrap; text-align: center;">
+          <button class="btn btn-small btn-edit" onclick="editEstimate(${est.id})" style="padding: 4px 8px; font-size: 11px;">Edit</button>
+          <button class="btn btn-small" onclick="downloadEstimatePDF(${est.id})" style="background: #38a169; color: white; padding: 4px 8px; font-size: 11px;">PDF</button>
+          <button class="btn btn-small" onclick="printEstimateFromDashboard(${est.id})" style="background: #3182ce; color: white; padding: 4px 8px; font-size: 11px;">Print</button>
+          <button class="btn btn-small btn-danger" onclick="deleteEstimate(${est.id})" style="padding: 4px 8px; font-size: 11px;">Del</button>
         </td>
       </tr>
     `;
@@ -316,9 +340,205 @@ function setupDashboardListeners() {
   }
 }
 
+// Edit estimate - load into new estimate form
+async function editEstimate(id) {
+  const estimate = await ipcRenderer.invoke('get-estimate', id);
+  if (!estimate) return;
+
+  // Set editing mode - this tells saveEstimate to update instead of create
+  editingEstimateId = id;
+
+  // Switch to new estimate view
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.classList.remove('active');
+    if (btn.dataset.view === 'new-estimate') btn.classList.add('active');
+  });
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('new-estimate-view').classList.add('active');
+
+  // Fill form with estimate data
+  document.getElementById('estimate-number').value = estimate.estimate_number;
+  document.getElementById('estimate-date').value = estimate.estimate_date;
+  document.getElementById('bill-to-name').value = estimate.bill_to_name;
+  document.getElementById('bill-to-address').value = estimate.bill_to_address || '';
+  document.getElementById('advanced-payment').value = estimate.advanced_payment || '';
+  document.getElementById('rounding').value = estimate.rounding || '';
+
+  // Load items
+  currentEstimateItems = estimate.items.map(item => ({
+    item_name: item.item_name,
+    description: item.description || '',
+    hsn_code: item.hsn_code || '',
+    quantity: item.quantity,
+    unit: item.unit,
+    rate: item.rate,
+    amount: item.amount
+  }));
+
+  renderItemsTable();
+  updateTotals();
+}
+
+// Download PDF from dashboard
+async function downloadEstimatePDF(id) {
+  const estimate = await ipcRenderer.invoke('get-estimate', id);
+  if (!estimate) return;
+
+  // Store current items and load estimate items temporarily
+  const savedItems = [...currentEstimateItems];
+  const savedNumber = document.getElementById('estimate-number').value;
+  const savedDate = document.getElementById('estimate-date').value;
+  const savedName = document.getElementById('bill-to-name').value;
+  const savedAddress = document.getElementById('bill-to-address').value;
+  const savedAdvance = document.getElementById('advanced-payment').value;
+  const savedRounding = document.getElementById('rounding').value;
+
+  // Set estimate data
+  document.getElementById('estimate-number').value = estimate.estimate_number;
+  document.getElementById('estimate-date').value = estimate.estimate_date;
+  document.getElementById('bill-to-name').value = estimate.bill_to_name;
+  document.getElementById('bill-to-address').value = estimate.bill_to_address || '';
+  document.getElementById('advanced-payment').value = estimate.advanced_payment || '';
+  document.getElementById('rounding').value = estimate.rounding || '';
+
+  currentEstimateItems = estimate.items.map(item => ({
+    item_name: item.item_name,
+    description: item.description || '',
+    hsn_code: item.hsn_code || '',
+    quantity: item.quantity,
+    unit: item.unit,
+    rate: item.rate,
+    amount: item.amount
+  }));
+
+  // Generate and download PDF
+  await downloadPDF();
+
+  // Restore original data
+  document.getElementById('estimate-number').value = savedNumber;
+  document.getElementById('estimate-date').value = savedDate;
+  document.getElementById('bill-to-name').value = savedName;
+  document.getElementById('bill-to-address').value = savedAddress;
+  document.getElementById('advanced-payment').value = savedAdvance;
+  document.getElementById('rounding').value = savedRounding;
+  currentEstimateItems = savedItems;
+}
+
+// Print from dashboard
+async function printEstimateFromDashboard(id) {
+  const estimate = await ipcRenderer.invoke('get-estimate', id);
+  if (!estimate) return;
+
+  // Store current items and load estimate items temporarily
+  const savedItems = [...currentEstimateItems];
+  const savedNumber = document.getElementById('estimate-number').value;
+  const savedDate = document.getElementById('estimate-date').value;
+  const savedName = document.getElementById('bill-to-name').value;
+  const savedAddress = document.getElementById('bill-to-address').value;
+  const savedAdvance = document.getElementById('advanced-payment').value;
+  const savedRounding = document.getElementById('rounding').value;
+
+  // Set estimate data
+  document.getElementById('estimate-number').value = estimate.estimate_number;
+  document.getElementById('estimate-date').value = estimate.estimate_date;
+  document.getElementById('bill-to-name').value = estimate.bill_to_name;
+  document.getElementById('bill-to-address').value = estimate.bill_to_address || '';
+  document.getElementById('advanced-payment').value = estimate.advanced_payment || '';
+  document.getElementById('rounding').value = estimate.rounding || '';
+
+  currentEstimateItems = estimate.items.map(item => ({
+    item_name: item.item_name,
+    description: item.description || '',
+    hsn_code: item.hsn_code || '',
+    quantity: item.quantity,
+    unit: item.unit,
+    rate: item.rate,
+    amount: item.amount
+  }));
+
+  // Print
+  await printEstimate();
+
+  // Restore original data
+  document.getElementById('estimate-number').value = savedNumber;
+  document.getElementById('estimate-date').value = savedDate;
+  document.getElementById('bill-to-name').value = savedName;
+  document.getElementById('bill-to-address').value = savedAddress;
+  document.getElementById('advanced-payment').value = savedAdvance;
+  document.getElementById('rounding').value = savedRounding;
+  currentEstimateItems = savedItems;
+}
+
+// Open estimate preview modal with PDF view
+async function openEstimatePreview(id) {
+  const estimate = await ipcRenderer.invoke('get-estimate', id);
+  if (!estimate) return;
+
+  // Store current items and load estimate items temporarily
+  const savedItems = [...currentEstimateItems];
+  const savedNumber = document.getElementById('estimate-number').value;
+  const savedDate = document.getElementById('estimate-date').value;
+  const savedName = document.getElementById('bill-to-name').value;
+  const savedAddress = document.getElementById('bill-to-address').value;
+  const savedAdvance = document.getElementById('advanced-payment').value;
+  const savedRounding = document.getElementById('rounding').value;
+
+  // Set estimate data
+  document.getElementById('estimate-number').value = estimate.estimate_number;
+  document.getElementById('estimate-date').value = estimate.estimate_date;
+  document.getElementById('bill-to-name').value = estimate.bill_to_name;
+  document.getElementById('bill-to-address').value = estimate.bill_to_address || '';
+  document.getElementById('advanced-payment').value = estimate.advanced_payment || '';
+  document.getElementById('rounding').value = estimate.rounding || '';
+
+  currentEstimateItems = estimate.items.map(item => ({
+    item_name: item.item_name,
+    description: item.description || '',
+    hsn_code: item.hsn_code || '',
+    quantity: item.quantity,
+    unit: item.unit,
+    rate: item.rate,
+    amount: item.amount
+  }));
+
+  // Show preview modal with buttons
+  const previewModal = document.getElementById('estimate-preview-modal');
+  if (previewModal) {
+    // Store estimate ID for actions
+    previewModal.dataset.estimateId = id;
+
+    // Generate print HTML for preview
+    const printHTML = generatePrintHTML();
+    const previewFrame = document.getElementById('estimate-preview-frame');
+    if (previewFrame) {
+      previewFrame.srcdoc = printHTML;
+    }
+
+    previewModal.classList.add('active');
+  } else {
+    // Fallback - show print preview
+    showPrintPreview();
+  }
+
+  // Restore original data after preview is shown
+  setTimeout(() => {
+    document.getElementById('estimate-number').value = savedNumber;
+    document.getElementById('estimate-date').value = savedDate;
+    document.getElementById('bill-to-name').value = savedName;
+    document.getElementById('bill-to-address').value = savedAddress;
+    document.getElementById('advanced-payment').value = savedAdvance;
+    document.getElementById('rounding').value = savedRounding;
+    currentEstimateItems = savedItems;
+  }, 100);
+}
+
 // Export functions
 window.loadDashboard = loadDashboard;
 window.setupDashboardListeners = setupDashboardListeners;
 window.viewEstimateDetails = viewEstimateDetails;
 window.deleteEstimate = deleteEstimate;
 window.deleteAllEstimates = deleteAllEstimates;
+window.editEstimate = editEstimate;
+window.downloadEstimatePDF = downloadEstimatePDF;
+window.printEstimateFromDashboard = printEstimateFromDashboard;
+window.openEstimatePreview = openEstimatePreview;

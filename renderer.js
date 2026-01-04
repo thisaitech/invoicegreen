@@ -10,6 +10,7 @@ console.log('Renderer loaded, ipcRenderer:', typeof ipcRenderer);
 let masterItems = [];
 let currentEstimateItems = [];
 let currentView = 'new-estimate';
+let editingEstimateId = null; // Track if we're editing an existing estimate
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -18,7 +19,180 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   setupDashboardListeners();
   setupCustomerListeners();
+  setupItemsTableDelegation();
+  setupWindowFocusFix();
 });
+
+// SIMPLE POLLING APPROACH - No complex event listeners that can freeze
+// This checks input values every 100ms and updates accordingly
+let inputPollingInterval = null;
+
+function setupWindowFocusFix() {
+  // Start polling when app loads
+  startInputPolling();
+
+  // Restart polling on focus
+  window.addEventListener('focus', () => {
+    startInputPolling();
+  });
+
+  // Restart polling on visibility change
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      startInputPolling();
+    }
+  });
+}
+
+function startInputPolling() {
+  // Clear existing interval
+  if (inputPollingInterval) {
+    clearInterval(inputPollingInterval);
+  }
+
+  // Poll every 100ms to check for input changes
+  inputPollingInterval = setInterval(() => {
+    syncInputsToData();
+  }, 100);
+}
+
+// Sync all input values to currentEstimateItems
+// Only syncs if user is actively typing (input is focused)
+function syncInputsToData() {
+  const tbody = document.getElementById('items-tbody');
+  if (!tbody) return;
+
+  const rows = tbody.querySelectorAll('tr');
+  rows.forEach((row, index) => {
+    if (!currentEstimateItems[index]) return;
+
+    const itemNameInput = row.querySelector('.item-name-input');
+    const itemDescInput = row.querySelector('.item-desc-input');
+    const qtyInput = row.querySelector('.qty-input');
+    const rateInput = row.querySelector('.rate-input');
+    const unitSelect = row.querySelector('.unit-select');
+
+    // Sync item name if focused
+    if (itemNameInput && document.activeElement === itemNameInput) {
+      const newName = itemNameInput.value || '';
+      if (currentEstimateItems[index].item_name !== newName) {
+        currentEstimateItems[index].item_name = newName;
+      }
+    }
+
+    // Sync item description if focused (strip HSN suffix for data storage)
+    if (itemDescInput && document.activeElement === itemDescInput) {
+      const descValue = itemDescInput.value || '';
+      const descWithoutHsn = descValue.replace(/\s*\|\s*HSN:\s*\d+\s*$/, '');
+      if (currentEstimateItems[index].description !== descWithoutHsn) {
+        currentEstimateItems[index].description = descWithoutHsn;
+      }
+    }
+
+    // Only sync qty if it's focused (user is typing) OR value changed from what we expect
+    if (qtyInput) {
+      const inputValue = qtyInput.value;
+      const newQty = parseFloat(inputValue) || 0;
+      const currentQty = currentEstimateItems[index].quantity;
+
+      // If input is focused, sync input -> data
+      // If input is not focused and values differ, sync data -> input (for programmatic updates)
+      if (document.activeElement === qtyInput) {
+        if (currentQty !== newQty) {
+          currentEstimateItems[index].quantity = newQty;
+          updateItemAmountDisplay(index);
+        }
+      }
+    }
+
+    if (rateInput) {
+      const inputValue = rateInput.value;
+      const newRate = parseFloat(inputValue) || 0;
+      const currentRate = currentEstimateItems[index].rate;
+
+      // If input is focused, sync input -> data
+      if (document.activeElement === rateInput) {
+        if (currentRate !== newRate) {
+          currentEstimateItems[index].rate = newRate;
+          updateItemAmountDisplay(index);
+        }
+      }
+    }
+
+    if (unitSelect) {
+      currentEstimateItems[index].unit = unitSelect.value;
+    }
+  });
+}
+
+// Update just the amount display without touching inputs
+function updateItemAmountDisplay(index) {
+  const item = currentEstimateItems[index];
+  if (!item) return;
+
+  item.amount = item.quantity * item.rate;
+  const amountEl = document.getElementById(`item-amount-${index}`);
+  if (amountEl) {
+    amountEl.textContent = `₹${item.amount.toFixed(2)}`;
+  }
+  updateTotals();
+}
+
+// Simple event delegation - for text inputs, selects and buttons
+function setupItemsTableDelegation() {
+  const tbody = document.getElementById('items-tbody');
+  if (!tbody) {
+    console.error('items-tbody not found!');
+    return;
+  }
+
+  // Handle input events for item name (to detect datalist selection)
+  tbody.addEventListener('input', (e) => {
+    const target = e.target;
+    const index = parseInt(target.dataset.index);
+
+    if (target.classList.contains('item-name-input')) {
+      const itemName = target.value;
+      // Check if this matches a master item (user selected from dropdown)
+      const masterItem = masterItems.find(i => i.name === itemName);
+      if (masterItem) {
+        handleItemNameSelection(index, itemName);
+      } else {
+        // User is typing custom item name
+        currentEstimateItems[index].item_name = itemName;
+      }
+    }
+
+    if (target.classList.contains('item-desc-input')) {
+      // User is editing description
+      updateItemDescription(index, target.value);
+    }
+  });
+
+  // Handle change events (fires when user leaves input or selects from datalist)
+  tbody.addEventListener('change', (e) => {
+    const target = e.target;
+    const index = parseInt(target.dataset.index);
+
+    if (target.classList.contains('item-name-input')) {
+      const itemName = target.value;
+      // Check if this matches a master item
+      const masterItem = masterItems.find(i => i.name === itemName);
+      if (masterItem) {
+        handleItemNameSelection(index, itemName);
+      }
+    }
+  });
+
+  // Handle click events (for remove buttons)
+  tbody.addEventListener('click', (e) => {
+    const target = e.target;
+    if (target.classList.contains('remove-btn')) {
+      const index = parseInt(target.dataset.index);
+      removeItemRow(index);
+    }
+  });
+}
 
 // Event Listeners
 function setupEventListeners() {
@@ -72,8 +246,9 @@ function setupEventListeners() {
 // Auto-calculate rounding
 function autoCalculateRounding() {
   const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
+  // User enters negative to subtract, positive to add
   const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
-  const beforeRounding = subTotal - advancedPayment;
+  const beforeRounding = subTotal + advancedPayment;
 
   // Round to nearest whole number
   const rounded = Math.round(beforeRounding);
@@ -227,6 +402,9 @@ function getISTDateString() {
 
 // New Estimate
 async function initializeNewEstimate() {
+  // Reset editing mode
+  editingEstimateId = null;
+
   const estimateNumber = await ipcRenderer.invoke('get-next-estimate-number');
   document.getElementById('estimate-number').value = estimateNumber;
   document.getElementById('estimate-date').value = getISTDateString();
@@ -333,20 +511,21 @@ function addItemRow() {
   });
 
   const row = document.createElement('tr');
+  row.id = `item-row-${index}`;
   row.innerHTML = `
     <td style="text-align: center;">${index + 1}</td>
     <td>
-      <select class="item-select" onchange="selectItem(${index}, this.value)">
-        <option value="">-- Select Item --</option>
-        ${masterItems.map(item => `
-          <option value="${item.id}">${item.name}</option>
-        `).join('')}
-      </select>
-      <div class="item-description" id="item-desc-${index}"></div>
+      <input type="text" class="item-name-input" data-index="${index}" id="item-name-${index}"
+             list="item-list-${index}" placeholder="Type item name..." autocomplete="off">
+      <datalist id="item-list-${index}">
+        ${masterItems.map(item => `<option value="${item.name}">${item.name}</option>`).join('')}
+      </datalist>
+      <input type="text" class="item-desc-input" data-index="${index}" id="item-desc-${index}"
+             placeholder="Description (auto-filled or type here)">
     </td>
-    <td style="text-align: center;"><input type="number" step="0.01" value="" placeholder="0" onfocus="if(this.value==='0')this.value=''" onblur="if(this.value==='')this.value='0'" onchange="updateItemQuantity(${index}, this.value)" style="text-align: center;"></td>
+    <td style="text-align: center;"><input type="text" class="qty-input" data-index="${index}" value="" placeholder="0" style="text-align: center; width: 80px;"></td>
     <td style="text-align: center;">
-      <select onchange="updateItemUnit(${index}, this.value)">
+      <select class="unit-select" data-index="${index}">
         <option value="kg">kg</option>
         <option value="pcs">pcs</option>
         <option value="nos">nos</option>
@@ -355,14 +534,15 @@ function addItemRow() {
         <option value="meter">meter</option>
       </select>
     </td>
-    <td style="text-align: right;"><input type="number" step="0.01" value="0" onchange="updateItemRate(${index}, this.value)" style="text-align: right;"></td>
+    <td style="text-align: right;"><input type="text" class="rate-input" data-index="${index}" value="0" style="text-align: right; width: 100px;"></td>
     <td style="text-align: right; font-weight: 600;" id="item-amount-${index}">₹0.00</td>
     <td style="text-align: center;">
-      <button class="btn btn-danger btn-small" onclick="removeItemRow(${index})">Remove</button>
+      <button class="btn btn-danger btn-small remove-btn" data-index="${index}">Remove</button>
     </td>
   `;
 
   tbody.appendChild(row);
+  // Polling will handle qty/rate updates - no event listeners needed on inputs
 }
 
 function selectItem(index, itemId) {
@@ -381,12 +561,22 @@ function selectItem(index, itemId) {
   const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
   document.getElementById(`item-desc-${index}`).textContent = (item.description || '') + hsnDisplay;
 
-  // Update rate input
+  // Update rate input and unit select
   const row = document.getElementById('items-tbody').children[index];
-  row.querySelector('td:nth-child(5) input').value = item.rate;
-  row.querySelector('td:nth-child(4) select').value = item.unit;
+  const rateInput = row.querySelector('.rate-input');
+  const unitSelect = row.querySelector('.unit-select');
+  const qtyInput = row.querySelector('.qty-input');
+
+  rateInput.value = item.rate;
+  unitSelect.value = item.unit;
 
   updateItemAmount(index);
+
+  // Focus on qty input after selecting item so user can enter quantity
+  setTimeout(() => {
+    qtyInput.focus();
+    qtyInput.select();
+  }, 50);
 }
 
 function updateItemQuantity(index, value) {
@@ -410,6 +600,56 @@ function updateItemAmount(index) {
   updateTotals();
 }
 
+function updateItemName(index, value) {
+  currentEstimateItems[index].item_name = value;
+}
+
+function updateItemDescription(index, value) {
+  // Strip HSN code from description if user edits it
+  currentEstimateItems[index].description = value.replace(/\s*\|\s*HSN:\s*\d+\s*$/, '');
+}
+
+function handleItemNameSelection(index, itemName) {
+  // Find matching master item
+  const item = masterItems.find(i => i.name === itemName);
+  if (!item) return;
+
+  // Auto-fill the item details from master
+  currentEstimateItems[index].item_name = item.name;
+  currentEstimateItems[index].description = item.description;
+  currentEstimateItems[index].hsn_code = item.hsn_code || '';
+  currentEstimateItems[index].rate = item.rate;
+  currentEstimateItems[index].unit = item.unit;
+
+  // Update description input with HSN
+  const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
+  const descInput = document.getElementById(`item-desc-${index}`);
+  if (descInput) {
+    descInput.value = (item.description || '') + hsnDisplay;
+  }
+
+  // Update rate input and unit select
+  const row = document.getElementById('items-tbody').children[index];
+  if (row) {
+    const rateInput = row.querySelector('.rate-input');
+    const unitSelect = row.querySelector('.unit-select');
+    const qtyInput = row.querySelector('.qty-input');
+
+    if (rateInput) rateInput.value = item.rate;
+    if (unitSelect) unitSelect.value = item.unit;
+
+    updateItemAmount(index);
+
+    // Focus on qty input after selecting item
+    if (qtyInput) {
+      setTimeout(() => {
+        qtyInput.focus();
+        qtyInput.select();
+      }, 50);
+    }
+  }
+}
+
 function removeItemRow(index) {
   currentEstimateItems.splice(index, 1);
   renderItemsTable();
@@ -422,21 +662,23 @@ function renderItemsTable() {
 
   currentEstimateItems.forEach((item, index) => {
     const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
+    const descWithHsn = (item.description || '') + hsnDisplay;
     const row = document.createElement('tr');
+    row.id = `item-row-${index}`;
     row.innerHTML = `
       <td style="text-align: center;">${index + 1}</td>
       <td>
-        <select class="item-select" onchange="selectItem(${index}, this.value)">
-          <option value="">-- Select Item --</option>
-          ${masterItems.map(mItem => `
-            <option value="${mItem.id}" ${mItem.name === item.item_name ? 'selected' : ''}>${mItem.name}</option>
-          `).join('')}
-        </select>
-        <div class="item-description" id="item-desc-${index}">${(item.description || '') + hsnDisplay}</div>
+        <input type="text" class="item-name-input" data-index="${index}" id="item-name-${index}"
+               list="item-list-${index}" placeholder="Type item name..." autocomplete="off" value="${item.item_name || ''}">
+        <datalist id="item-list-${index}">
+          ${masterItems.map(mItem => `<option value="${mItem.name}">${mItem.name}</option>`).join('')}
+        </datalist>
+        <input type="text" class="item-desc-input" data-index="${index}" id="item-desc-${index}"
+               placeholder="Description (auto-filled or type here)" value="${descWithHsn}">
       </td>
-      <td style="text-align: center;"><input type="number" step="0.01" value="${item.quantity}" onchange="updateItemQuantity(${index}, this.value)" style="text-align: center;"></td>
+      <td style="text-align: center;"><input type="text" class="qty-input" data-index="${index}" value="${item.quantity}" style="text-align: center; width: 80px;"></td>
       <td style="text-align: center;">
-        <select onchange="updateItemUnit(${index}, this.value)">
+        <select class="unit-select" data-index="${index}">
           <option value="kg" ${item.unit === 'kg' ? 'selected' : ''}>kg</option>
           <option value="pcs" ${item.unit === 'pcs' ? 'selected' : ''}>pcs</option>
           <option value="nos" ${item.unit === 'nos' ? 'selected' : ''}>nos</option>
@@ -445,13 +687,14 @@ function renderItemsTable() {
           <option value="meter" ${item.unit === 'meter' ? 'selected' : ''}>meter</option>
         </select>
       </td>
-      <td style="text-align: right;"><input type="number" step="0.01" value="${item.rate}" onchange="updateItemRate(${index}, this.value)" style="text-align: right;"></td>
+      <td style="text-align: right;"><input type="text" class="rate-input" data-index="${index}" value="${item.rate}" style="text-align: right; width: 100px;"></td>
       <td style="text-align: right; font-weight: 600;" id="item-amount-${index}">₹${item.amount.toFixed(2)}</td>
       <td style="text-align: center;">
-        <button class="btn btn-danger btn-small" onclick="removeItemRow(${index})">Remove</button>
+        <button class="btn btn-danger btn-small remove-btn" data-index="${index}">Remove</button>
       </td>
     `;
     tbody.appendChild(row);
+    // Polling handles qty/rate updates - no event listeners needed
   });
 }
 
@@ -467,10 +710,12 @@ function updateTotals() {
   }, 0);
 
   // Get advanced payment and rounding
+  // User enters negative (-10000) to subtract, positive (10000) to add
   const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
   const rounding = parseFloat(document.getElementById('rounding').value) || 0;
 
-  const total = subTotal - advancedPayment + rounding;
+  // advancedPayment sign is respected: negative subtracts, positive adds
+  const total = subTotal + advancedPayment + rounding;
 
   document.getElementById('sub-total').textContent = `₹${subTotal.toFixed(2)}`;
   document.getElementById('grand-total').textContent = `₹${total.toFixed(2)}`;
@@ -509,9 +754,10 @@ async function saveEstimate() {
   }
 
   const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
+  // User enters negative to subtract, positive to add
   const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
   const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal - advancedPayment + rounding;
+  const total = subTotal + advancedPayment + rounding;
 
   const estimateData = {
     estimate_number: estimateNumber,
@@ -528,22 +774,39 @@ async function saveEstimate() {
   };
 
   try {
-    await ipcRenderer.invoke('save-estimate', estimateData);
-    alert('Estimate saved successfully!');
+    if (editingEstimateId) {
+      // Update existing estimate
+      estimateData.id = editingEstimateId;
+      await ipcRenderer.invoke('update-estimate', estimateData);
+      alert('Estimate updated successfully!');
+    } else {
+      // Create new estimate
+      await ipcRenderer.invoke('save-estimate', estimateData);
+      // Increment estimate number only for new estimates
+      await ipcRenderer.invoke('increment-estimate-number');
+      alert('Estimate saved successfully!');
+    }
+    editingEstimateId = null; // Reset editing state
     initializeNewEstimate();
   } catch (error) {
     alert('Error saving estimate: ' + error.message);
   }
 }
 
+// Flag to prevent duplicate saves
+let isSavingAndPrinting = false;
+
 // Save and Print
 async function saveAndPrint() {
-  // First save
-  const estimateNumber = document.getElementById('estimate-number').value;
-  const estimateDate = document.getElementById('estimate-date').value;
-  const billToName = document.getElementById('bill-to-name').value;
-  const billToAddress = document.getElementById('bill-to-address').value;
+  // Prevent duplicate clicks
+  if (isSavingAndPrinting) {
+    return;
+  }
 
+  const saveBtn = document.getElementById('save-and-print-btn');
+
+  // Validate first before disabling button
+  const billToName = document.getElementById('bill-to-name').value;
   if (!billToName) {
     alert('Please enter Bill To name');
     return;
@@ -554,10 +817,22 @@ async function saveAndPrint() {
     return;
   }
 
+  // Set flag and disable button immediately
+  isSavingAndPrinting = true;
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+  }
+
+  const estimateNumber = document.getElementById('estimate-number').value;
+  const estimateDate = document.getElementById('estimate-date').value;
+  const billToAddress = document.getElementById('bill-to-address').value;
+
   const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
+  // User enters negative to subtract, positive to add
   const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
   const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal - advancedPayment + rounding;
+  const total = subTotal + advancedPayment + rounding;
 
   const estimateData = {
     estimate_number: estimateNumber,
@@ -574,12 +849,24 @@ async function saveAndPrint() {
   };
 
   try {
-    await ipcRenderer.invoke('save-estimate', estimateData);
-    // Then print
-    await printEstimate();
+    // Save and print in parallel for speed
+    const savePromise = ipcRenderer.invoke('save-estimate', estimateData);
+    const printPromise = printEstimate();
+
+    await savePromise;
+    await ipcRenderer.invoke('increment-estimate-number');
+    await printPromise;
+
     initializeNewEstimate();
   } catch (error) {
     alert('Error: ' + error.message);
+  } finally {
+    // Re-enable button
+    isSavingAndPrinting = false;
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '💾 Save & Print';
+    }
   }
 }
 
@@ -680,13 +967,24 @@ function generatePrintHTML() {
   const billToAddress = document.getElementById('bill-to-address').value;
   const formattedAddress = formatAddressForPrint(billToAddress);
   const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
+  // User enters negative to subtract, positive to add
   const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
   const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal - advancedPayment + rounding;
+  const total = subTotal + advancedPayment + rounding;
   const totalKg = currentEstimateItems.reduce((sum, item) => {
     if (item.unit === 'kg') return sum + (parseFloat(item.quantity) || 0);
     return sum;
   }, 0);
+
+  // Helper to format number (no currency symbol)
+  const formatNumber = (num) => {
+    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Helper to format total with Rupee symbol
+  const formatTotal = (num) => {
+    return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
 
   const itemsHTML = currentEstimateItems
     .filter(i => i.quantity > 0)
@@ -701,8 +999,8 @@ function generatePrintHTML() {
         </td>
         <td class="center">${item.quantity}</td>
         <td class="center">${item.unit}</td>
-        <td class="right">₹${item.rate.toFixed(2)}</td>
-        <td class="right"><strong>₹${item.amount.toFixed(2)}</strong></td>
+        <td class="right">${formatNumber(item.rate)}</td>
+        <td class="right"><strong>${formatNumber(item.amount)}</strong></td>
       </tr>
     `;
     }).join('');
@@ -711,6 +1009,7 @@ function generatePrintHTML() {
     <!DOCTYPE html>
     <html>
     <head>
+      <meta charset="UTF-8">
       <style>
         @page { size: A4; margin: 10mm; }
         * { box-sizing: border-box; }
@@ -723,7 +1022,7 @@ function generatePrintHTML() {
         .document-header { text-align: center; margin: 0; padding: 15px; padding-bottom: 10px; border-bottom: 1px solid #333; }
         .document-header h1 { margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px; }
 
-        /* Info Table */
+        /* Info Table - 50/50 split to align with items table and footer */
         .info-table { width: 100%; margin-bottom: 0; border-collapse: collapse; }
         .info-table td { padding: 8px 15px; vertical-align: top; border: 1px solid #333; border-top: none; }
         .info-table .label { font-weight: bold; width: 120px; background: #f5f5f5; }
@@ -755,11 +1054,11 @@ function generatePrintHTML() {
         .items-table .desc { font-size: 9px; color: #555; font-style: italic; }
         .items-table .rate-note { font-size: 8px; color: #666; font-weight: normal; }
 
-        /* Footer Section - Full width table layout */
+        /* Footer Section - Full width table layout (50/50 split to align with Unit column) */
         .footer-table { width: 100%; border-collapse: collapse; margin-top: -1px; }
         .footer-table td { border: 1px solid #333; vertical-align: top; }
-        .footer-left-cell { width: 55%; padding: 10px; }
-        .footer-right-cell { width: 45%; padding: 0; }
+        .footer-left-cell { width: 50%; padding: 10px; }
+        .footer-right-cell { width: 50%; padding: 0; }
 
         /* Totals Table */
         .totals-table { width: 100%; border-collapse: collapse; }
@@ -805,12 +1104,12 @@ function generatePrintHTML() {
       <table class="items-table">
         <thead>
           <tr>
-            <th class="center" style="width: 6%;">#</th>
-            <th class="left" style="width: 38%;">Item & Description</th>
+            <th class="center" style="width: 5%;">#</th>
+            <th class="left" style="width: 35%;">Item & Description</th>
             <th class="center" style="width: 10%;">Qty</th>
-            <th class="center" style="width: 10%;">Unit</th>
-            <th class="right" style="width: 16%;">Net Rate<br><span class="rate-note">(Incl. GST)</span></th>
-            <th class="right" style="width: 20%;">Amount</th>
+            <th class="center" style="width: 8%;">Unit</th>
+            <th class="right" style="width: 18%;">Net Rate<br><span class="rate-note">(Incl. GST)</span></th>
+            <th class="right" style="width: 24%;">Amount</th>
           </tr>
         </thead>
         <tbody>
@@ -828,19 +1127,19 @@ function generatePrintHTML() {
             <table class="totals-table">
               <tr>
                 <td class="label">Sub Total <span style="font-size: 9px; color: #666;">(Tax Inclusive)</span></td>
-                <td class="value">₹${subTotal.toFixed(2)}</td>
+                <td class="value">${formatNumber(subTotal)}</td>
               </tr>
               <tr>
-                <td class="label">Advance Payment / Previous Balance</td>
-                <td class="value">${advancedPayment > 0 ? '-' : ''}₹${advancedPayment.toFixed(2)}</td>
+                <td class="label">Advance / Prev Balance</td>
+                <td class="value">${advancedPayment > 0 ? '- ' : ''}${formatNumber(advancedPayment)}</td>
               </tr>
               <tr>
                 <td class="label">Rounding</td>
-                <td class="value">₹${rounding.toFixed(2)}</td>
+                <td class="value">${formatNumber(rounding)}</td>
               </tr>
               <tr class="grand">
                 <td class="label">TOTAL</td>
-                <td class="value">₹${total.toFixed(2)}</td>
+                <td class="value">${formatTotal(total)}</td>
               </tr>
             </table>
             <div class="signature-box">
@@ -1086,34 +1385,115 @@ async function sendEmail() {
 }
 
 // Helper to generate PDF document object
+// Format address for PDF (returns array of lines)
+function formatAddressForPDF(addressString) {
+  if (!addressString) return [];
+
+  const parts = addressString.split(/[,\n]+/).map(p => p.trim()).filter(p => p);
+
+  let street = '', city = '', pincode = '', state = '', country = '';
+
+  const knownStates = ['Tamil Nadu', 'Tamilnadu', 'Karnataka', 'Kerala', 'Andhra Pradesh', 'Telangana', 'Maharashtra', 'Gujarat', 'Rajasthan', 'Delhi', 'Punjab', 'Haryana', 'Uttar Pradesh', 'Madhya Pradesh', 'West Bengal', 'Bihar', 'Odisha', 'Assam', 'Jharkhand', 'Chhattisgarh', 'Goa'];
+  const knownCountries = ['India', 'INDIA', 'USA', 'UK', 'UAE', 'Singapore', 'Australia'];
+
+  parts.forEach(part => {
+    if (/^\d{6}$/.test(part)) {
+      pincode = part;
+    }
+    else if (knownStates.some(s => part.toLowerCase() === s.toLowerCase())) {
+      state = part;
+    }
+    else if (knownCountries.some(c => part.toLowerCase() === c.toLowerCase())) {
+      country = part;
+    }
+    else if (part.length < 25 && !city && street) {
+      city = part;
+    }
+    else {
+      if (!street) street = part;
+      else if (!city) city = part;
+      else street += ', ' + part;
+    }
+  });
+
+  const lines = [];
+  if (street) lines.push(street);
+  if (city && pincode) lines.push(`${city} - ${pincode}`);
+  else if (city) lines.push(city);
+  else if (pincode) lines.push(pincode);
+  if (state) lines.push(state);
+  if (country) lines.push(country);
+
+  return lines;
+}
+
 function generatePDFDocument() {
   const doc = new jsPDF();
+
+  // Helper to format number (no currency symbol)
+  const fmtNumber = (num) => {
+    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Helper to format total with Rupee symbol
+  const fmtTotal = (num) => {
+    return 'Rs. ' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Page border
+  doc.setDrawColor(51, 51, 51);
+  doc.setLineWidth(0.3);
+  doc.rect(10, 10, 190, 277);
 
   // Title
   doc.setFontSize(20);
   doc.setFont(undefined, 'bold');
-  doc.text('ESTIMATE', 105, 20, { align: 'center' });
+  doc.text('ESTIMATE', 105, 22, { align: 'center' });
 
-  // Estimate Info
-  doc.setFontSize(10);
-  doc.setFont(undefined, 'normal');
+  // Line under title
+  doc.setLineWidth(0.3);
+  doc.line(10, 26, 200, 26);
 
+  // Get form data
   const estimateNumber = document.getElementById('estimate-number').value;
   const estimateDate = document.getElementById('estimate-date').value;
   const billToName = document.getElementById('bill-to-name').value;
   const billToAddress = document.getElementById('bill-to-address').value;
 
-  doc.text(`Estimate No: ${estimateNumber}`, 14, 35);
-  doc.text(`Date: ${new Date(estimateDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`, 14, 42);
-
-  // Bill To
+  // Left side - Estimate info
+  doc.setFontSize(10);
   doc.setFont(undefined, 'bold');
-  doc.text('Bill To:', 120, 35);
+  doc.text('Estimate No:', 14, 35);
   doc.setFont(undefined, 'normal');
-  doc.text(billToName, 120, 42);
+  doc.text(estimateNumber, 50, 35);
 
-  const addressLines = doc.splitTextToSize(billToAddress, 75);
-  doc.text(addressLines, 120, 49);
+  doc.setFont(undefined, 'bold');
+  doc.text('Estimate Date:', 14, 43);
+  doc.setFont(undefined, 'normal');
+  doc.text(new Date(estimateDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }), 50, 43);
+
+  // Right side - Recipient / Bill To header
+  doc.setFillColor(245, 245, 245);
+  doc.rect(105, 28, 95, 8, 'F');
+  doc.setDrawColor(51, 51, 51);
+  doc.rect(105, 28, 95, 8, 'S');
+  doc.setFont(undefined, 'bold');
+  doc.text('Recipient / Bill To', 109, 34);
+
+  // Address box - increased height to fit all lines
+  doc.rect(105, 36, 95, 30, 'S');
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(10);
+  doc.text(billToName, 109, 43);
+  doc.setFont(undefined, 'normal');
+  doc.setFontSize(9);
+
+  const addressLines = formatAddressForPDF(billToAddress);
+  let addrY = 49;
+  addressLines.forEach(line => {
+    doc.text(line, 109, addrY);
+    addrY += 5;
+  });
 
   // Items Table
   const tableData = currentEstimateItems
@@ -1125,65 +1505,109 @@ function generatePDFDocument() {
         `${item.item_name}\n${(item.description || '') + hsnDisplay}`,
         item.quantity,
         item.unit,
-        `₹${item.rate.toFixed(2)}`,
-        `₹${item.amount.toFixed(2)}`
+        fmtNumber(item.rate),
+        fmtNumber(item.amount)
       ];
     });
 
+  // Column widths aligned with footer divider at x=105
+  // Left side (before divider): 10 + 67 + 18 = 95mm
+  // Right side (after divider): 15 + 35 + 45 = 95mm
   doc.autoTable({
-    startY: 70,
+    startY: 68,
     head: [['#', 'Item & Description', 'Qty', 'Unit', 'Net Rate\n(Incl. GST)', 'Amount']],
     body: tableData,
     theme: 'grid',
-    headStyles: { fillColor: [102, 126, 234], fontSize: 10 },
-    styles: { fontSize: 9 },
+    headStyles: { fillColor: [232, 232, 232], textColor: [0, 0, 0], fontSize: 10, fontStyle: 'bold' },
+    styles: { fontSize: 9, lineColor: [51, 51, 51], lineWidth: 0.2 },
     columnStyles: {
-      0: { cellWidth: 10 },
-      1: { cellWidth: 80 },
-      2: { cellWidth: 20 },
-      3: { cellWidth: 20 },
-      4: { cellWidth: 25 },
-      5: { cellWidth: 30, halign: 'right' }
-    }
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 67 },
+      2: { cellWidth: 18, halign: 'center' },
+      3: { cellWidth: 15, halign: 'center' },
+      4: { cellWidth: 35, halign: 'right' },
+      5: { cellWidth: 45, halign: 'right', fontStyle: 'bold' }
+    },
+    margin: { left: 10, right: 10 }
   });
 
-  // Totals
-  const finalY = doc.lastAutoTable.finalY + 10;
+  // Calculate totals
+  const finalY = doc.lastAutoTable.finalY;
   const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
+  // User enters negative to subtract, positive to add
   const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
   const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal - advancedPayment + rounding;
+  const total = subTotal + advancedPayment + rounding;
+  const totalKg = currentEstimateItems.reduce((sum, item) => {
+    if (item.unit === 'kg') return sum + (parseFloat(item.quantity) || 0);
+    return sum;
+  }, 0);
 
-  doc.text('Sub Total (Tax Inclusive):', 120, finalY);
-  doc.text(`₹${subTotal.toFixed(2)}`, 185, finalY, { align: 'right' });
+  // Footer section - with straight borders (2 columns only)
+  const footerY = finalY;
+  const leftW = 95;
+  const rightW = 95;
 
-  if (advancedPayment > 0) {
-    doc.text('Advance/Prev Balance:', 120, finalY + 6);
-    doc.text(`-₹${advancedPayment.toFixed(2)}`, 185, finalY + 6, { align: 'right' });
-  }
+  // Draw footer manually for perfect alignment
+  doc.setDrawColor(51, 51, 51);
+  doc.setLineWidth(0.2);
 
-  if (rounding !== 0) {
-    doc.text('Rounding:', 120, finalY + (advancedPayment > 0 ? 12 : 6));
-    doc.text(`₹${rounding.toFixed(2)}`, 185, finalY + (advancedPayment > 0 ? 12 : 6), { align: 'right' });
-  }
-
-  const totalY = finalY + (advancedPayment > 0 ? 18 : rounding !== 0 ? 12 : 6);
-
+  // Left column - Total Quantity row
+  doc.rect(10, footerY, leftW, 10);
   doc.setFont(undefined, 'bold');
-  doc.setFontSize(12);
-  doc.text('Total:', 120, totalY);
-  doc.text(`₹${total.toFixed(2)}`, 185, totalY, { align: 'right' });
-
-  // Total in Words
-  doc.setFont(undefined, 'italic');
-  doc.setFontSize(9);
-  doc.text(`Total In Words: ${numberToWords(total)}`, 14, totalY + 8);
-
-  // Signature
-  doc.setFont(undefined, 'normal');
   doc.setFontSize(10);
-  doc.text('Authorized Signature', 14, totalY + 30);
-  doc.line(14, totalY + 32, 60, totalY + 32);
+  doc.text('Total Quantity: ' + totalKg.toFixed(2) + ' kg', 14, footerY + 7);
+
+  // Left column - Amount in Words (spans remaining rows)
+  doc.setFillColor(249, 249, 249);
+  doc.rect(10, footerY + 10, leftW, 50, 'FD');
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(9);
+  doc.text('Amount in Words:', 14, footerY + 18);
+  doc.setFont(undefined, 'normal');
+  const wordsLines = doc.splitTextToSize(numberToWords(total), leftW - 10);
+  doc.text(wordsLines, 14, footerY + 26);
+
+  // Right column - Sub Total
+  doc.setFillColor(249, 249, 249);
+  doc.rect(10 + leftW, footerY, rightW, 10, 'FD');
+  doc.setFont(undefined, 'normal');
+  doc.setFontSize(9);
+  doc.text('Sub Total (Tax Inclusive)', 10 + leftW + 4, footerY + 7);
+  doc.setFont(undefined, 'bold');
+  doc.text(fmtNumber(subTotal), 10 + leftW + rightW - 4, footerY + 7, { align: 'right' });
+
+  // Right column - Advance
+  doc.setFillColor(255, 255, 255);
+  doc.rect(10 + leftW, footerY + 10, rightW, 10, 'FD');
+  doc.setFont(undefined, 'normal');
+  doc.text('Advance / Prev Balance', 10 + leftW + 4, footerY + 17);
+  doc.setFont(undefined, 'bold');
+  doc.text((advancedPayment > 0 ? '- ' : '') + fmtNumber(advancedPayment), 10 + leftW + rightW - 4, footerY + 17, { align: 'right' });
+
+  // Right column - Rounding
+  doc.setFillColor(255, 255, 255);
+  doc.rect(10 + leftW, footerY + 20, rightW, 10, 'FD');
+  doc.setFont(undefined, 'normal');
+  doc.text('Rounding', 10 + leftW + 4, footerY + 27);
+  doc.setFont(undefined, 'bold');
+  doc.text(fmtNumber(rounding), 10 + leftW + rightW - 4, footerY + 27, { align: 'right' });
+
+  // Right column - TOTAL
+  doc.setFillColor(232, 232, 232);
+  doc.rect(10 + leftW, footerY + 30, rightW, 10, 'FD');
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(11);
+  doc.text('TOTAL', 10 + leftW + 4, footerY + 37);
+  doc.text(fmtTotal(total), 10 + leftW + rightW - 4, footerY + 37, { align: 'right' });
+
+  // Right column - Signature
+  doc.setFillColor(255, 255, 255);
+  doc.rect(10 + leftW, footerY + 40, rightW, 20, 'FD');
+  doc.setFont(undefined, 'normal');
+  doc.setFontSize(9);
+  doc.line(10 + leftW + 20, footerY + 52, 10 + leftW + rightW - 20, footerY + 52);
+  doc.text('Authorized Signature', 10 + leftW + (rightW / 2), footerY + 57, { align: 'center' });
 
   return doc;
 }

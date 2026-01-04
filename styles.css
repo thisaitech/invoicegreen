@@ -353,6 +353,52 @@ body {
   font-style: italic;
 }
 
+/* Item name and description input styling */
+.item-name-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  background: white;
+  margin-bottom: 4px;
+}
+
+.item-name-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.item-desc-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #718096;
+  font-style: italic;
+  background: #fafbfc;
+}
+
+.item-desc-input:focus {
+  outline: none;
+  border-color: #667eea;
+  background: white;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.item-desc-input::placeholder {
+  color: #a0aec0;
+  font-style: italic;
+}
+
+.item-name-input::placeholder {
+  color: #a0aec0;
+  font-weight: normal;
+}
+
 /* Totals */
 .totals-section {
   margin-top: 15px;
