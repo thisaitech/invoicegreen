@@ -114,11 +114,11 @@
               </div>
               <div class="total-row">
                 <span class="total-label">Advance/Balance</span>
-                <input type="number" id="advanced-payment" class="total-input" value="" placeholder="0" step="0.01">
+                <input type="number" id="advanced-payment" class="total-input" value="" placeholder="0" step="0.01" oninput="updateTotals()">
               </div>
               <div class="total-row">
                 <span class="total-label">Rounding <button id="auto-round-btn" class="auto-round-btn">Auto</button></span>
-                <input type="number" id="rounding" class="total-input" value="" placeholder="0" step="0.01">
+                <input type="number" id="rounding" class="total-input" value="" placeholder="0" step="0.01" oninput="updateTotals()">
               </div>
               <div class="total-row grand-total">
                 <span class="total-label">Grand Total</span>

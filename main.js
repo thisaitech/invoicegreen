@@ -1,6 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const util = require('util');
+
+// Promisify fs.writeFile
+const writeFile = util.promisify(fs.writeFile);
 
 let mainWindow;
 let dataPath;
@@ -47,9 +51,9 @@ function initializeDefaultData() {
   saveData();
 }
 
-function saveData() {
+async function saveData() {
   try {
-    fs.writeFileSync(dataPath, JSON.stringify(data, null, 2), 'utf8');
+    await writeFile(dataPath, JSON.stringify(data, null, 2), 'utf8');
   } catch (error) {
     console.error('Error saving data:', error);
   }
@@ -92,12 +96,12 @@ app.on('window-all-closed', () => {
 // IPC Handlers
 
 // Get all items
-ipcMain.handle('get-items', () => {
+ipcMain.handle('get-items', async () => {
   return data.items.sort((a, b) => a.name.localeCompare(b.name));
 });
 
 // Add new item
-ipcMain.handle('add-item', (event, item) => {
+ipcMain.handle('add-item', async (event, item) => {
   const newItem = {
     id: data.nextItemId++,
     name: item.name,
@@ -108,12 +112,12 @@ ipcMain.handle('add-item', (event, item) => {
     available_qty: parseFloat(item.available_qty) || 0
   };
   data.items.push(newItem);
-  saveData();
+  await saveData();
   return newItem;
 });
 
 // Update item
-ipcMain.handle('update-item', (event, item) => {
+ipcMain.handle('update-item', async (event, item) => {
   const index = data.items.findIndex(i => i.id === item.id);
   if (index !== -1) {
     data.items[index] = {
@@ -125,30 +129,30 @@ ipcMain.handle('update-item', (event, item) => {
       unit: item.unit,
       available_qty: parseFloat(item.available_qty) || 0
     };
-    saveData();
+    await saveData();
   }
   return item;
 });
 
 // Delete item
-ipcMain.handle('delete-item', (event, id) => {
+ipcMain.handle('delete-item', async (event, id) => {
   data.items = data.items.filter(i => i.id !== id);
-  saveData();
+  await saveData();
   return { success: true };
 });
 
 // Get all estimates
-ipcMain.handle('get-estimates', () => {
+ipcMain.handle('get-estimates', async () => {
   return data.estimates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 100);
 });
 
 // Get estimate by ID with items
-ipcMain.handle('get-estimate', (event, id) => {
+ipcMain.handle('get-estimate', async (event, id) => {
   return data.estimates.find(e => e.id === id) || null;
 });
 
 // Save estimate
-ipcMain.handle('save-estimate', (event, estimateData) => {
+ipcMain.handle('save-estimate', async (event, estimateData) => {
   const newEstimate = {
     id: data.nextEstimateId++,
     estimate_number: estimateData.estimate_number,
@@ -182,12 +186,12 @@ ipcMain.handle('save-estimate', (event, estimateData) => {
   });
 
   data.estimates.push(newEstimate);
-  saveData();
+  await saveData();
   return newEstimate;
 });
 
 // Update existing estimate
-ipcMain.handle('update-estimate', (event, estimateData) => {
+ipcMain.handle('update-estimate', async (event, estimateData) => {
   const index = data.estimates.findIndex(e => e.id === estimateData.id);
   if (index === -1) {
     throw new Error('Estimate not found');
@@ -240,12 +244,12 @@ ipcMain.handle('update-estimate', (event, estimateData) => {
   });
 
   data.estimates[index] = updatedEstimate;
-  saveData();
+  await saveData();
   return updatedEstimate;
 });
 
 // Get next estimate number
-ipcMain.handle('get-next-estimate-number', () => {
+ipcMain.handle('get-next-estimate-number', async () => {
   // Always calculate from saved estimates to ensure accuracy
   let maxNum = 0;
   if (data.estimates && data.estimates.length > 0) {
@@ -265,14 +269,14 @@ ipcMain.handle('get-next-estimate-number', () => {
 
   // Store it
   data.nextEstimateNumber = nextNum;
-  saveData();
+  await saveData();
 
   console.log('Get next estimate number:', nextNum, 'Max found:', maxNum);
   return `EST-${String(nextNum).padStart(3, '0')}`;
 });
 
 // Increment estimate number after save - this is called AFTER save-estimate
-ipcMain.handle('increment-estimate-number', () => {
+ipcMain.handle('increment-estimate-number', async () => {
   // Recalculate from saved estimates (save-estimate already added the new one)
   let maxNum = 0;
   if (data.estimates && data.estimates.length > 0) {
@@ -289,7 +293,7 @@ ipcMain.handle('increment-estimate-number', () => {
 
   // Next available is max + 1
   data.nextEstimateNumber = maxNum + 1;
-  saveData();
+  await saveData();
 
   console.log('Increment estimate number. Max:', maxNum, 'Next:', data.nextEstimateNumber);
   return data.nextEstimateNumber;
@@ -359,7 +363,7 @@ ipcMain.handle('save-pdf', async (event, pdfData, defaultName) => {
 
   if (filePath) {
     const buffer = Buffer.from(pdfData, 'base64');
-    fs.writeFileSync(filePath, buffer);
+    await writeFile(filePath, buffer);
     return { success: true, path: filePath };
   }
 
@@ -367,29 +371,29 @@ ipcMain.handle('save-pdf', async (event, pdfData, defaultName) => {
 });
 
 // Delete estimate
-ipcMain.handle('delete-estimate', (event, id) => {
+ipcMain.handle('delete-estimate', async (event, id) => {
   data.estimates = data.estimates.filter(e => e.id !== id);
-  saveData();
+  await saveData();
   return { success: true };
 });
 
 // Delete all estimates
-ipcMain.handle('delete-all-estimates', () => {
+ipcMain.handle('delete-all-estimates', async () => {
   data.estimates = [];
   data.nextEstimateId = 1;
-  saveData();
+  await saveData();
   return { success: true };
 });
 
 // Customer Management Handlers
 
 // Get all customers
-ipcMain.handle('get-customers', () => {
+ipcMain.handle('get-customers', async () => {
   return data.customers || [];
 });
 
 // Add customer
-ipcMain.handle('add-customer', (event, customer) => {
+ipcMain.handle('add-customer', async (event, customer) => {
   if (!data.customers) data.customers = [];
   if (!data.nextCustomerId) data.nextCustomerId = 1;
 
@@ -408,12 +412,12 @@ ipcMain.handle('add-customer', (event, customer) => {
   };
 
   data.customers.push(newCustomer);
-  saveData();
+  await saveData();
   return newCustomer;
 });
 
 // Update customer
-ipcMain.handle('update-customer', (event, customer) => {
+ipcMain.handle('update-customer', async (event, customer) => {
   const index = data.customers.findIndex(c => c.id === customer.id);
   if (index !== -1) {
     data.customers[index] = {
@@ -429,26 +433,24 @@ ipcMain.handle('update-customer', (event, customer) => {
       gstn: customer.gstn || '',
       opening_balance: parseFloat(customer.opening_balance) || 0
     };
-    saveData();
+    await saveData();
   }
   return customer;
 });
 
 // Delete customer
-ipcMain.handle('delete-customer', (event, id) => {
+ipcMain.handle('delete-customer', async (event, id) => {
   data.customers = data.customers.filter(c => c.id !== id);
-  saveData();
+  await saveData();
   return { success: true };
 });
 
 // Send Email Handler
 ipcMain.handle('send-email', async (event, emailData) => {
-  const { shell } = require('electron');
-
   // Save PDF temporarily
   const tempPdfPath = path.join(app.getPath('temp'), emailData.fileName);
   const buffer = Buffer.from(emailData.pdfData, 'base64');
-  fs.writeFileSync(tempPdfPath, buffer);
+  await writeFile(tempPdfPath, buffer);
 
   // Open default email client with mailto link
   // Note: This opens the email client but doesn't attach the PDF automatically

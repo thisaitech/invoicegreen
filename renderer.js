@@ -14,13 +14,22 @@ let editingEstimateId = null; // Track if we're editing an existing estimate
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadMasterItems();
-  await initializeNewEstimate();
-  setupEventListeners();
-  setupDashboardListeners();
-  setupCustomerListeners();
-  setupItemsTableDelegation();
-  setupWindowFocusFix();
+  try {
+    console.log('Initializing app...');
+    await loadMasterItems();
+    console.log('Master items loaded:', masterItems.length);
+    await initializeNewEstimate();
+    console.log('New estimate initialized');
+    setupEventListeners();
+    setupDashboardListeners();
+    setupCustomerListeners();
+    setupItemsTableDelegation();
+    setupWindowFocusFix();
+    setupTotalsListeners();
+    console.log('All setup complete');
+  } catch (error) {
+    console.error('Initialization error:', error);
+  }
 });
 
 // SIMPLE POLLING APPROACH - No complex event listeners that can freeze
@@ -57,12 +66,14 @@ function startInputPolling() {
 }
 
 // Sync all input values to currentEstimateItems
-// Only syncs if user is actively typing (input is focused)
+// ALWAYS reads from inputs and calculates amounts
 function syncInputsToData() {
   const tbody = document.getElementById('items-tbody');
   if (!tbody) return;
 
   const rows = tbody.querySelectorAll('tr');
+  let needsUpdate = false;
+
   rows.forEach((row, index) => {
     if (!currentEstimateItems[index]) return;
 
@@ -72,57 +83,64 @@ function syncInputsToData() {
     const rateInput = row.querySelector('.rate-input');
     const unitSelect = row.querySelector('.unit-select');
 
-    // Sync item name if focused
-    if (itemNameInput && document.activeElement === itemNameInput) {
-      const newName = itemNameInput.value || '';
+    // Sync item name from input
+    if (itemNameInput) {
+      const newName = itemNameInput.value.trim();
       if (currentEstimateItems[index].item_name !== newName) {
         currentEstimateItems[index].item_name = newName;
       }
     }
 
-    // Sync item description if focused (strip HSN suffix for data storage)
-    if (itemDescInput && document.activeElement === itemDescInput) {
-      const descValue = itemDescInput.value || '';
-      const descWithoutHsn = descValue.replace(/\s*\|\s*HSN:\s*\d+\s*$/, '');
-      if (currentEstimateItems[index].description !== descWithoutHsn) {
-        currentEstimateItems[index].description = descWithoutHsn;
+    // Sync description from input (strip HSN for storage)
+    if (itemDescInput) {
+      const newDesc = itemDescInput.value.replace(/\s*\|\s*HSN:\s*\d+\s*$/, '').trim();
+      if (currentEstimateItems[index].description !== newDesc) {
+        currentEstimateItems[index].description = newDesc;
       }
     }
 
-    // Only sync qty if it's focused (user is typing) OR value changed from what we expect
+    // Always sync qty from input
     if (qtyInput) {
-      const inputValue = qtyInput.value;
-      const newQty = parseFloat(inputValue) || 0;
-      const currentQty = currentEstimateItems[index].quantity;
-
-      // If input is focused, sync input -> data
-      // If input is not focused and values differ, sync data -> input (for programmatic updates)
-      if (document.activeElement === qtyInput) {
-        if (currentQty !== newQty) {
-          currentEstimateItems[index].quantity = newQty;
-          updateItemAmountDisplay(index);
-        }
+      const newQty = parseFloat(qtyInput.value) || 0;
+      if (currentEstimateItems[index].quantity !== newQty) {
+        currentEstimateItems[index].quantity = newQty;
+        needsUpdate = true;
       }
     }
 
+    // Always sync rate from input
     if (rateInput) {
-      const inputValue = rateInput.value;
-      const newRate = parseFloat(inputValue) || 0;
-      const currentRate = currentEstimateItems[index].rate;
-
-      // If input is focused, sync input -> data
-      if (document.activeElement === rateInput) {
-        if (currentRate !== newRate) {
-          currentEstimateItems[index].rate = newRate;
-          updateItemAmountDisplay(index);
-        }
+      const newRate = parseFloat(rateInput.value) || 0;
+      if (currentEstimateItems[index].rate !== newRate) {
+        currentEstimateItems[index].rate = newRate;
+        needsUpdate = true;
       }
     }
 
+    // Always sync unit
     if (unitSelect) {
       currentEstimateItems[index].unit = unitSelect.value;
     }
+
+    // Calculate and update amount
+    const qty = currentEstimateItems[index].quantity || 0;
+    const rate = currentEstimateItems[index].rate || 0;
+    const newAmount = qty * rate;
+
+    if (currentEstimateItems[index].amount !== newAmount) {
+      currentEstimateItems[index].amount = newAmount;
+      const amountEl = document.getElementById(`item-amount-${index}`);
+      if (amountEl) {
+        amountEl.textContent = `₹${newAmount.toFixed(2)}`;
+      }
+      needsUpdate = true;
+    }
   });
+
+  // Update totals if anything changed
+  if (needsUpdate) {
+    updateTotals();
+  }
 }
 
 // Update just the amount display without touching inputs
@@ -149,37 +167,74 @@ function setupItemsTableDelegation() {
   // Handle input events for item name (to detect datalist selection)
   tbody.addEventListener('input', (e) => {
     const target = e.target;
+    if (!target.dataset || target.dataset.index === undefined) return;
     const index = parseInt(target.dataset.index);
+    if (isNaN(index)) return;
 
     if (target.classList.contains('item-name-input')) {
-      const itemName = target.value;
+      const itemName = target.value.trim();
+      if (!itemName) return;
+
       // Check if this matches a master item (user selected from dropdown)
       const masterItem = masterItems.find(i => i.name === itemName);
       if (masterItem) {
+        console.log('Input event: Found master item:', masterItem.name);
         handleItemNameSelection(index, itemName);
       } else {
         // User is typing custom item name
-        currentEstimateItems[index].item_name = itemName;
+        if (currentEstimateItems[index]) {
+          currentEstimateItems[index].item_name = itemName;
+        }
       }
     }
 
     if (target.classList.contains('item-desc-input')) {
       // User is editing description
-      updateItemDescription(index, target.value);
+      if (currentEstimateItems[index]) {
+        updateItemDescription(index, target.value);
+      }
     }
   });
 
   // Handle change events (fires when user leaves input or selects from datalist)
   tbody.addEventListener('change', (e) => {
     const target = e.target;
+    if (!target.dataset || target.dataset.index === undefined) return;
     const index = parseInt(target.dataset.index);
+    if (isNaN(index)) return;
 
     if (target.classList.contains('item-name-input')) {
-      const itemName = target.value;
+      const itemName = target.value.trim();
+      if (!itemName) return;
+
       // Check if this matches a master item
       const masterItem = masterItems.find(i => i.name === itemName);
       if (masterItem) {
+        console.log('Change event: Found master item:', masterItem.name);
         handleItemNameSelection(index, itemName);
+      }
+    }
+  });
+
+  // Handle blur events as backup (fires when user clicks away from input)
+  tbody.addEventListener('focusout', (e) => {
+    const target = e.target;
+    if (!target.dataset || target.dataset.index === undefined) return;
+    const index = parseInt(target.dataset.index);
+    if (isNaN(index)) return;
+
+    if (target.classList.contains('item-name-input')) {
+      const itemName = target.value.trim();
+      if (!itemName) return;
+
+      // Check if this matches a master item
+      const masterItem = masterItems.find(i => i.name === itemName);
+      if (masterItem && currentEstimateItems[index]) {
+        // Only auto-fill if rate is still 0 (not already filled)
+        if (currentEstimateItems[index].rate === 0) {
+          console.log('Focusout event: Auto-filling item:', masterItem.name);
+          handleItemNameSelection(index, itemName);
+        }
       }
     }
   });
@@ -189,7 +244,9 @@ function setupItemsTableDelegation() {
     const target = e.target;
     if (target.classList.contains('remove-btn')) {
       const index = parseInt(target.dataset.index);
-      removeItemRow(index);
+      if (!isNaN(index)) {
+        removeItemRow(index);
+      }
     }
   });
 }
@@ -205,12 +262,19 @@ function setupEventListeners() {
   });
 
   // New Estimate
-  document.getElementById('add-item-row-btn').addEventListener('click', addItemRow);
-  document.getElementById('save-estimate-btn').addEventListener('click', saveEstimate);
-  document.getElementById('save-and-print-btn').addEventListener('click', saveAndPrint);
-  document.getElementById('preview-estimate-btn').addEventListener('click', showPrintPreview);
-  document.getElementById('email-pdf-btn').addEventListener('click', showEmailModal);
-  document.getElementById('download-pdf-btn').addEventListener('click', downloadPDF);
+  const addItemBtn = document.getElementById('add-item-row-btn');
+  const saveEstimateBtn = document.getElementById('save-estimate-btn');
+  const saveAndPrintBtn = document.getElementById('save-and-print-btn');
+  const previewBtn = document.getElementById('preview-estimate-btn');
+  const emailPdfBtn = document.getElementById('email-pdf-btn');
+  const downloadPdfBtn = document.getElementById('download-pdf-btn');
+
+  if (addItemBtn) addItemBtn.addEventListener('click', addItemRow);
+  if (saveEstimateBtn) saveEstimateBtn.addEventListener('click', saveEstimate);
+  if (saveAndPrintBtn) saveAndPrintBtn.addEventListener('click', saveAndPrint);
+  if (previewBtn) previewBtn.addEventListener('click', showPrintPreview);
+  if (emailPdfBtn) emailPdfBtn.addEventListener('click', showEmailModal);
+  if (downloadPdfBtn) downloadPdfBtn.addEventListener('click', downloadPDF);
 
   // Print from preview
   const printFromPreviewBtn = document.getElementById('print-from-preview-btn');
@@ -231,8 +295,10 @@ function setupEventListeners() {
   }
 
   // Items Management
-  document.getElementById('add-new-item-btn').addEventListener('click', () => openItemModal());
-  document.getElementById('save-item-btn').addEventListener('click', saveItem);
+  const addNewItemBtn = document.getElementById('add-new-item-btn');
+  const saveItemBtn = document.getElementById('save-item-btn');
+  if (addNewItemBtn) addNewItemBtn.addEventListener('click', () => openItemModal());
+  if (saveItemBtn) saveItemBtn.addEventListener('click', saveItem);
 
   // Modal
   document.querySelectorAll('.close').forEach(el => {
@@ -240,7 +306,8 @@ function setupEventListeners() {
   });
 
   // Date default
-  document.getElementById('estimate-date').valueAsDate = new Date();
+  const estimateDateEl = document.getElementById('estimate-date');
+  if (estimateDateEl) estimateDateEl.valueAsDate = new Date();
 }
 
 // Auto-calculate rounding
@@ -498,6 +565,10 @@ async function selectCustomer(customerId) {
 
 function addItemRow() {
   const tbody = document.getElementById('items-tbody');
+  if (!tbody) {
+    console.error('items-tbody not found!');
+    return;
+  }
   const index = currentEstimateItems.length;
 
   currentEstimateItems.push({
@@ -542,7 +613,62 @@ function addItemRow() {
   `;
 
   tbody.appendChild(row);
-  // Polling will handle qty/rate updates - no event listeners needed on inputs
+
+  // Add direct event listener for item name input (datalist selection)
+  const itemNameInput = row.querySelector('.item-name-input');
+  if (itemNameInput) {
+    // Listen for input event (fires when typing or selecting from datalist)
+    itemNameInput.addEventListener('input', function() {
+      const itemName = this.value.trim();
+      if (itemName) {
+        const masterItem = masterItems.find(i => i.name === itemName);
+        if (masterItem) {
+          console.log('Direct input listener: Found item:', masterItem.name, 'Rate:', masterItem.rate);
+          handleItemNameSelection(index, itemName);
+        }
+      }
+    });
+
+    // Also listen for change event as backup
+    itemNameInput.addEventListener('change', function() {
+      const itemName = this.value.trim();
+      if (itemName) {
+        const masterItem = masterItems.find(i => i.name === itemName);
+        if (masterItem) {
+          console.log('Direct change listener: Found item:', masterItem.name);
+          handleItemNameSelection(index, itemName);
+        }
+      }
+    });
+  }
+
+  // Add direct event listeners for qty and rate inputs
+  const qtyInput = row.querySelector('.qty-input');
+  const rateInput = row.querySelector('.rate-input');
+
+  if (qtyInput) {
+    qtyInput.addEventListener('input', function() {
+      const qty = parseFloat(this.value) || 0;
+      currentEstimateItems[index].quantity = qty;
+      const rate = currentEstimateItems[index].rate || 0;
+      const amount = qty * rate;
+      currentEstimateItems[index].amount = amount;
+      document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
+      updateTotals();
+    });
+  }
+
+  if (rateInput) {
+    rateInput.addEventListener('input', function() {
+      const rate = parseFloat(this.value) || 0;
+      currentEstimateItems[index].rate = rate;
+      const qty = currentEstimateItems[index].quantity || 0;
+      const amount = qty * rate;
+      currentEstimateItems[index].amount = amount;
+      document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
+      updateTotals();
+    });
+  }
 }
 
 function selectItem(index, itemId) {
@@ -612,41 +738,67 @@ function updateItemDescription(index, value) {
 function handleItemNameSelection(index, itemName) {
   // Find matching master item
   const item = masterItems.find(i => i.name === itemName);
-  if (!item) return;
+  if (!item) {
+    console.log('Item not found in master:', itemName);
+    return;
+  }
+
+  console.log('Auto-filling item:', item.name, 'Rate:', item.rate);
 
   // Auto-fill the item details from master
   currentEstimateItems[index].item_name = item.name;
-  currentEstimateItems[index].description = item.description;
+  currentEstimateItems[index].description = item.description || '';
   currentEstimateItems[index].hsn_code = item.hsn_code || '';
-  currentEstimateItems[index].rate = item.rate;
-  currentEstimateItems[index].unit = item.unit;
+  currentEstimateItems[index].rate = item.rate || 0;
+  currentEstimateItems[index].unit = item.unit || 'kg';
+
+  // Keep quantity as-is (user will enter it manually)
+
+  // Find the row by ID
+  const row = document.getElementById(`item-row-${index}`);
+  if (!row) {
+    console.log('Row not found for index:', index);
+    return;
+  }
 
   // Update description input with HSN
   const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
-  const descInput = document.getElementById(`item-desc-${index}`);
+  const descInput = row.querySelector('.item-desc-input');
   if (descInput) {
     descInput.value = (item.description || '') + hsnDisplay;
   }
 
-  // Update rate input and unit select
-  const row = document.getElementById('items-tbody').children[index];
-  if (row) {
-    const rateInput = row.querySelector('.rate-input');
-    const unitSelect = row.querySelector('.unit-select');
-    const qtyInput = row.querySelector('.qty-input');
+  // Update rate input, qty input, and unit select
+  const rateInput = row.querySelector('.rate-input');
+  const unitSelect = row.querySelector('.unit-select');
+  const qtyInput = row.querySelector('.qty-input');
 
-    if (rateInput) rateInput.value = item.rate;
-    if (unitSelect) unitSelect.value = item.unit;
+  if (rateInput) {
+    rateInput.value = item.rate || 0;
+    console.log('Set rate input to:', item.rate);
+  }
+  if (unitSelect) unitSelect.value = item.unit || 'kg';
+  // Don't auto-fill qty - user will enter it manually
 
-    updateItemAmount(index);
+  // Calculate and update amount immediately
+  const qty = currentEstimateItems[index].quantity;
+  const rate = currentEstimateItems[index].rate;
+  currentEstimateItems[index].amount = qty * rate;
 
-    // Focus on qty input after selecting item
-    if (qtyInput) {
-      setTimeout(() => {
-        qtyInput.focus();
-        qtyInput.select();
-      }, 50);
-    }
+  const amountEl = document.getElementById(`item-amount-${index}`);
+  if (amountEl) {
+    amountEl.textContent = `₹${currentEstimateItems[index].amount.toFixed(2)}`;
+  }
+
+  // Update totals
+  updateTotals();
+
+  // Focus on qty input after selecting item
+  if (qtyInput) {
+    setTimeout(() => {
+      qtyInput.focus();
+      qtyInput.select();
+    }, 50);
   }
 }
 
@@ -694,7 +846,57 @@ function renderItemsTable() {
       </td>
     `;
     tbody.appendChild(row);
-    // Polling handles qty/rate updates - no event listeners needed
+
+    // Add direct event listener for item name input
+    const itemNameInput = row.querySelector('.item-name-input');
+    if (itemNameInput) {
+      itemNameInput.addEventListener('input', function() {
+        const itemName = this.value.trim();
+        if (itemName) {
+          const masterItem = masterItems.find(i => i.name === itemName);
+          if (masterItem) {
+            handleItemNameSelection(index, itemName);
+          }
+        }
+      });
+      itemNameInput.addEventListener('change', function() {
+        const itemName = this.value.trim();
+        if (itemName) {
+          const masterItem = masterItems.find(i => i.name === itemName);
+          if (masterItem) {
+            handleItemNameSelection(index, itemName);
+          }
+        }
+      });
+    }
+
+    // Add direct event listeners for qty and rate inputs
+    const qtyInput = row.querySelector('.qty-input');
+    const rateInput = row.querySelector('.rate-input');
+
+    if (qtyInput) {
+      qtyInput.addEventListener('input', function() {
+        const qty = parseFloat(this.value) || 0;
+        currentEstimateItems[index].quantity = qty;
+        const rate = currentEstimateItems[index].rate || 0;
+        const amount = qty * rate;
+        currentEstimateItems[index].amount = amount;
+        document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
+        updateTotals();
+      });
+    }
+
+    if (rateInput) {
+      rateInput.addEventListener('input', function() {
+        const rate = parseFloat(this.value) || 0;
+        currentEstimateItems[index].rate = rate;
+        const qty = currentEstimateItems[index].quantity || 0;
+        const amount = qty * rate;
+        currentEstimateItems[index].amount = amount;
+        document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
+        updateTotals();
+      });
+    }
   });
 }
 
@@ -723,18 +925,20 @@ function updateTotals() {
   document.getElementById('total-words').textContent = `Total In Words: ${numberToWords(total)}`;
 }
 
-// Add event listeners for advanced payment and rounding
-document.addEventListener('DOMContentLoaded', () => {
+// Setup event listeners for advanced payment and rounding
+function setupTotalsListeners() {
   const advPayment = document.getElementById('advanced-payment');
   const roundingInput = document.getElementById('rounding');
 
   if (advPayment) {
     advPayment.addEventListener('input', updateTotals);
+    advPayment.addEventListener('change', updateTotals);
   }
   if (roundingInput) {
     roundingInput.addEventListener('input', updateTotals);
+    roundingInput.addEventListener('change', updateTotals);
   }
-});
+}
 
 // Save Estimate
 async function saveEstimate() {
@@ -1622,3 +1826,4 @@ window.removeItemRow = removeItemRow;
 window.editItem = editItem;
 window.deleteItem = deleteItem;
 window.viewEstimate = viewEstimate;
+window.updateTotals = updateTotals;
