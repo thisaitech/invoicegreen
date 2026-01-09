@@ -11,6 +11,13 @@ const util = require('util');
 const writeFile = util.promisify(fs.writeFile);
 
 // ============================================================================
+// DISABLE HARDWARE ACCELERATION - FIX FOR INPUT FREEZE ON WINDOWS
+// ============================================================================
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+
+// ============================================================================
 // APPLICATION STATE
 // ============================================================================
 
@@ -79,14 +86,25 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    backgroundColor: '#f0f2f5',
+    show: false,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
+      backgroundThrottling: false,
+      offscreen: false,
+      enableBlinkFeatures: '',
+      disableBlinkFeatures: 'Auxclick'
     }
   });
 
+  // Show window only after fully loaded to prevent rendering issues
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    mainWindow.maximize();
+  });
+
   mainWindow.loadFile('index.html');
-  mainWindow.maximize();
 }
 
 app.whenReady().then(() => {
@@ -174,6 +192,8 @@ ipcMain.handle('save-estimate', async (event, estimateData) => {
     bill_to_address: estimateData.bill_to_address || '',
     sub_total: parseFloat(estimateData.sub_total),
     advanced_payment: parseFloat(estimateData.advanced_payment) || 0,
+    previous_balance: parseFloat(estimateData.previous_balance) || 0,
+    advance_sign: estimateData.advance_sign || '-',
     rounding: parseFloat(estimateData.rounding) || 0,
     total: parseFloat(estimateData.total),
     total_in_words: estimateData.total_in_words,
@@ -229,6 +249,7 @@ ipcMain.handle('update-estimate', async (event, estimateData) => {
     bill_to_address: estimateData.bill_to_address || '',
     sub_total: parseFloat(estimateData.sub_total),
     advanced_payment: parseFloat(estimateData.advanced_payment) || 0,
+    advance_sign: estimateData.advance_sign || '-',
     rounding: parseFloat(estimateData.rounding) || 0,
     total: parseFloat(estimateData.total),
     total_in_words: estimateData.total_in_words,
@@ -275,7 +296,8 @@ ipcMain.handle('delete-all-estimates', async () => {
 // IPC HANDLERS - ESTIMATE NUMBER
 // ============================================================================
 
-ipcMain.handle('get-next-estimate-number', async () => {
+// Helper function to get max estimate number from existing estimates
+function getMaxEstimateNumber() {
   let maxNum = 0;
   if (data.estimates && data.estimates.length > 0) {
     data.estimates.forEach(est => {
@@ -288,31 +310,20 @@ ipcMain.handle('get-next-estimate-number', async () => {
       }
     });
   }
+  return maxNum;
+}
 
+ipcMain.handle('get-next-estimate-number', async () => {
+  const maxNum = getMaxEstimateNumber();
   const nextNum = maxNum + 1;
-  data.nextEstimateNumber = nextNum;
-  await saveData();
-
   return `EST-${String(nextNum).padStart(3, '0')}`;
 });
 
 ipcMain.handle('increment-estimate-number', async () => {
-  let maxNum = 0;
-  if (data.estimates && data.estimates.length > 0) {
-    data.estimates.forEach(est => {
-      if (est.estimate_number) {
-        const match = est.estimate_number.match(/(\d+)$/);
-        if (match) {
-          const num = parseInt(match[1]);
-          if (num > maxNum) maxNum = num;
-        }
-      }
-    });
-  }
-
-  data.nextEstimateNumber = maxNum + 1;
-  await saveData();
-  return data.nextEstimateNumber;
+  // This is called AFTER save-estimate, so the new estimate is already in the list
+  // The next call to get-next-estimate-number will automatically return the correct number
+  // We don't need to do anything special here
+  return true;
 });
 
 // ============================================================================
@@ -408,10 +419,12 @@ ipcMain.handle('print-estimate', (event, htmlContent, printerName) => {
           printWindow.close();
           if (success) {
             resolve({ success: true });
-          } else if (errorType === 'cancelled') {
-            resolve({ success: false, cancelled: true });
           } else {
-            reject(new Error(errorType || 'Print failed'));
+            // Handle cancelled/canceled (both spellings) or any cancel-related error
+            const isCancelled = !errorType ||
+              errorType.toLowerCase().includes('cancel') ||
+              errorType.toLowerCase().includes('cancelled');
+            resolve({ success: false, cancelled: isCancelled, error: errorType });
           }
         });
       }, 500);

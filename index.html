@@ -8,6 +8,9 @@
   <link rel="stylesheet" href="dashboard-styles.css">
 </head>
 <body>
+  <!-- Global datalist for master items -->
+  <datalist id="master-items-list"></datalist>
+
   <div class="container">
     <!-- Sidebar -->
     <div class="sidebar">
@@ -113,12 +116,16 @@
                 <span class="total-value" id="sub-total">₹0.00</span>
               </div>
               <div class="total-row">
-                <span class="total-label">Advance/Balance</span>
-                <input type="number" id="advanced-payment" class="total-input" value="" placeholder="0" step="0.01" oninput="updateTotals()">
+                <span class="total-label">Advance</span>
+                <input type="text" id="advanced-payment" class="total-input" value="" placeholder="0" inputmode="decimal">
+              </div>
+              <div class="total-row">
+                <span class="total-label">Previous Balance</span>
+                <input type="text" id="previous-balance" class="total-input" value="" placeholder="0" inputmode="decimal">
               </div>
               <div class="total-row">
                 <span class="total-label">Rounding <button id="auto-round-btn" class="auto-round-btn">Auto</button></span>
-                <input type="number" id="rounding" class="total-input" value="" placeholder="0" step="0.01" oninput="updateTotals()">
+                <input type="text" id="rounding" class="total-input" value="" placeholder="0" inputmode="decimal">
               </div>
               <div class="total-row grand-total">
                 <span class="total-label">Grand Total</span>
@@ -504,16 +511,16 @@
     <div class="modal-content" style="width: 90%; max-width: 900px; height: 90%;">
       <div class="modal-header">
         <h2>Estimate Preview</h2>
-        <span class="close" onclick="document.getElementById('estimate-preview-modal').classList.remove('active')">&times;</span>
+        <span class="close">&times;</span>
       </div>
       <div class="modal-body" style="height: calc(100% - 120px); padding: 0;">
         <iframe id="estimate-preview-frame" style="width: 100%; height: 100%; border: none;"></iframe>
       </div>
       <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
-        <button class="btn" onclick="editEstimate(parseInt(document.getElementById('estimate-preview-modal').dataset.estimateId)); document.getElementById('estimate-preview-modal').classList.remove('active');" style="background: #4299e1; color: white;">Edit</button>
-        <button class="btn" onclick="downloadEstimatePDF(parseInt(document.getElementById('estimate-preview-modal').dataset.estimateId))" style="background: #38a169; color: white;">Download PDF</button>
-        <button class="btn" onclick="printEstimateFromDashboard(parseInt(document.getElementById('estimate-preview-modal').dataset.estimateId))" style="background: #3182ce; color: white;">Print</button>
-        <button class="btn btn-cancel" onclick="document.getElementById('estimate-preview-modal').classList.remove('active')">Close</button>
+        <button id="preview-edit-btn" class="btn" style="background: #4299e1; color: white;">Edit</button>
+        <button id="preview-pdf-btn" class="btn" style="background: #38a169; color: white;">Download PDF</button>
+        <button id="preview-print-btn" class="btn" style="background: #3182ce; color: white;">Print</button>
+        <button class="btn btn-cancel close">Close</button>
       </div>
     </div>
   </div>

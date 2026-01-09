@@ -1,436 +1,766 @@
 /**
  * Estimate Generator - Renderer Process
- * Handles all UI interactions, form management, and PDF generation
+ * MINIMAL VERSION - No DOM updates during typing
  */
 
-// Electron and PDF modules
 const { ipcRenderer } = require('electron');
 const { jsPDF } = require('jspdf');
 require('jspdf-autotable');
 
-// ============================================================================
-// STATE MANAGEMENT
-// ============================================================================
-let masterItems = [];
-let currentEstimateItems = [];
-let currentView = 'new-estimate';
-let editingEstimateId = null;
-let inputPollingInterval = null;
-let isSavingAndPrinting = false;
+var masterItems = [];
+var estimateItems = [];
+var editingId = null;
 
-// ============================================================================
-// INITIALIZATION
-// ============================================================================
-document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    await loadMasterItems();
-    await initializeNewEstimate();
-    setupEventListeners();
-    setupDashboardListeners();
-    setupCustomerListeners();
-    setupItemsTableDelegation();
-    setupWindowFocusFix();
-    setupTotalsListeners();
-  } catch (error) {
-    console.error('Initialization error:', error);
-  }
-});
+document.addEventListener('DOMContentLoaded', init);
 
-// ============================================================================
-// INPUT POLLING - Prevents input freezing issues
-// ============================================================================
+async function init() {
+  masterItems = await ipcRenderer.invoke('get-items');
+  await loadCustomerDropdown();
+  await setNewEstimateNumber();
+  setTodayDate();
+  addRow();
+  setupEvents();
+  startInputSync(); // Start polling for input changes
+  applyFocusFixToAll(); // Apply focus cycle fix to all inputs
+  if (typeof setupDashboardListeners === 'function') setupDashboardListeners();
+}
 
-function setupWindowFocusFix() {
-  // Start polling when app loads
-  startInputPolling();
-
-  // Restart polling on focus
-  window.addEventListener('focus', () => {
-    startInputPolling();
+function setupEvents() {
+  // Navigation
+  document.querySelectorAll('.nav-btn').forEach(function(btn) {
+    btn.onclick = function() { switchView(this.dataset.view); };
   });
 
-  // Restart polling on visibility change
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      startInputPolling();
-    }
+  // Buttons
+  var el;
+  el = document.getElementById('add-item-row-btn'); if (el) el.onclick = addRow;
+  el = document.getElementById('save-estimate-btn'); if (el) el.onclick = saveEstimate;
+  el = document.getElementById('save-and-print-btn'); if (el) el.onclick = saveAndPrint;
+  el = document.getElementById('preview-estimate-btn'); if (el) el.onclick = showPreview;
+  el = document.getElementById('download-pdf-btn'); if (el) el.onclick = downloadPDF;
+  el = document.getElementById('auto-round-btn'); if (el) el.onclick = autoRound;
+  el = document.getElementById('print-from-preview-btn'); if (el) el.onclick = printFromPreview;
+  el = document.getElementById('add-new-item-btn'); if (el) el.onclick = function() { openItemModal(); };
+  el = document.getElementById('save-item-btn'); if (el) el.onclick = saveItem;
+  el = document.getElementById('add-customer-btn'); if (el) el.onclick = function() { openCustomerModal(); };
+  el = document.getElementById('save-customer-btn'); if (el) el.onclick = saveCustomer;
+
+  // Totals - NO event handlers, polling handles it
+
+  // Customer search - respond to both input and change events
+  el = document.getElementById('customer-search');
+  if (el) {
+    el.oninput = handleCustomerSearch;
+    el.onchange = handleCustomerSelect;
+  }
+
+  // Preview modal buttons
+  el = document.getElementById('preview-edit-btn');
+  if (el) el.onclick = function() {
+    var modal = document.getElementById('estimate-preview-modal');
+    var id = parseInt(modal.dataset.estimateId);
+    if (id) { window.editEstimate(id); modal.classList.remove('active'); }
+  };
+
+  el = document.getElementById('preview-pdf-btn');
+  if (el) {
+    el.onclick = async function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var modal = document.getElementById('estimate-preview-modal');
+      var id = modal ? parseInt(modal.dataset.estimateId) : 0;
+      if (id && !isNaN(id)) {
+        await window.downloadEstimatePDF(id);
+      } else {
+        alert('No estimate selected');
+      }
+    };
+  }
+
+  el = document.getElementById('preview-print-btn');
+  if (el) el.onclick = function() {
+    var modal = document.getElementById('estimate-preview-modal');
+    var id = parseInt(modal.dataset.estimateId);
+    if (id) window.printEstimateFromDashboard(id);
+  };
+
+  // Modal close
+  ['print-preview-modal', 'email-modal', 'customer-modal', 'item-modal', 'estimate-preview-modal'].forEach(function(id) {
+    var modal = document.getElementById(id);
+    if (!modal) return;
+    modal.querySelectorAll('.close, .btn-cancel').forEach(function(btn) {
+      btn.onclick = function(e) { e.stopPropagation(); modal.classList.remove('active'); };
+    });
+    modal.onclick = function(e) { if (e.target === modal) modal.classList.remove('active'); };
   });
 }
 
-function startInputPolling() {
-  // Clear existing interval
-  if (inputPollingInterval) {
-    clearInterval(inputPollingInterval);
+function switchView(view) {
+  document.querySelectorAll('.nav-btn').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+  var el = document.getElementById(view + '-view');
+  if (el) el.classList.add('active');
+  if (view === 'dashboard' && typeof loadDashboard === 'function') loadDashboard();
+  else if (view === 'customers') loadCustomersList();
+  else if (view === 'items') loadItemsList();
+}
+
+// ============ ITEMS TABLE ============
+// KEYBOARD CAPTURE WORKAROUND - manually handle keyboard input when frozen
+var lastFocusedInput = null;
+var inputFrozenTimer = null;
+
+// Global keyboard handler to capture input when element appears frozen
+document.addEventListener('keydown', function(e) {
+  var el = document.activeElement;
+  if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+  if (el.type === 'date' || el.type === 'checkbox' || el.type === 'radio') return;
+
+  // Check if this is a printable character or special key
+  var key = e.key;
+
+  // Handle backspace
+  if (key === 'Backspace') {
+    var val = el.value;
+    var start = el.selectionStart || val.length;
+    var end = el.selectionEnd || val.length;
+    if (start === end && start > 0) {
+      el.value = val.slice(0, start - 1) + val.slice(end);
+      try { el.setSelectionRange(start - 1, start - 1); } catch(ex) {}
+    } else if (start !== end) {
+      el.value = val.slice(0, start) + val.slice(end);
+      try { el.setSelectionRange(start, start); } catch(ex) {}
+    }
+    triggerInputEvent(el);
+    e.preventDefault();
+    return;
   }
 
-  // Poll every 100ms to check for input changes
-  inputPollingInterval = setInterval(() => {
-    syncInputsToData();
+  // Handle delete
+  if (key === 'Delete') {
+    var val = el.value;
+    var start = el.selectionStart || 0;
+    var end = el.selectionEnd || 0;
+    if (start === end && start < val.length) {
+      el.value = val.slice(0, start) + val.slice(end + 1);
+      try { el.setSelectionRange(start, start); } catch(ex) {}
+    } else if (start !== end) {
+      el.value = val.slice(0, start) + val.slice(end);
+      try { el.setSelectionRange(start, start); } catch(ex) {}
+    }
+    triggerInputEvent(el);
+    e.preventDefault();
+    return;
+  }
+
+  // Check if this is a numeric input field (qty, rate, advance, previous-balance, rounding)
+  var isNumericField = el.id && (
+    el.id.startsWith('qty-') ||
+    el.id.startsWith('rate-') ||
+    el.id === 'advanced-payment' ||
+    el.id === 'previous-balance' ||
+    el.id === 'rounding' ||
+    el.id === 'modal-item-rate' ||
+    el.id === 'modal-item-available-qty' ||
+    el.id === 'modal-customer-opening-balance'
+  );
+
+  // Handle printable characters
+  if (key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    // For numeric text inputs, only allow numbers, decimal, and minus
+    if (isNumericField) {
+      var val = el.value || '';
+      var start = el.selectionStart !== null ? el.selectionStart : val.length;
+
+      // Allow digits
+      if (/\d/.test(key)) {
+        // OK, allow digit
+      }
+      // Allow decimal point if not already present
+      else if (key === '.' && !val.includes('.')) {
+        // OK, allow decimal
+      }
+      // Allow minus only at start
+      else if (key === '-' && start === 0 && !val.includes('-')) {
+        // OK, allow minus at start
+      }
+      // Block all other characters
+      else {
+        e.preventDefault();
+        return;
+      }
+    }
+
+    var val = el.value;
+    var start = el.selectionStart !== null ? el.selectionStart : val.length;
+    var end = el.selectionEnd !== null ? el.selectionEnd : val.length;
+
+    el.value = val.slice(0, start) + key + val.slice(end);
+    var newPos = start + 1;
+    try { el.setSelectionRange(newPos, newPos); } catch(ex) {}
+    triggerInputEvent(el);
+    e.preventDefault();
+  }
+}, true);
+
+function triggerInputEvent(el) {
+  var evt = new Event('input', { bubbles: true, cancelable: true });
+  el.dispatchEvent(evt);
+}
+
+// ============ FOCUS GLOW SYSTEM - POLLING BASED ============
+// Polls every 100ms to check which element is focused and applies glow
+var glowInterval = null;
+var lastGlowedId = null;
+
+function startGlowPolling() {
+  if (glowInterval) return; // Already running
+
+  glowInterval = setInterval(function() {
+    var active = document.activeElement;
+    var activeId = active ? (active.id || active.tagName + Math.random()) : null;
+
+    // Check if focus changed
+    if (activeId === lastGlowedId) return; // No change
+
+    // Remove glow from ALL inputs first
+    document.querySelectorAll('input, textarea, select').forEach(function(el) {
+      el.style.outline = '';
+      el.style.borderColor = '';
+      el.style.borderWidth = '';
+      el.style.boxShadow = '';
+      el.style.backgroundColor = '';
+    });
+
+    // Apply glow to currently focused element
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) {
+      active.style.outline = 'none';
+      active.style.borderColor = '#667eea';
+      active.style.borderWidth = '2px';
+      active.style.boxShadow = '0 0 0 4px rgba(102, 126, 234, 0.3)';
+      active.style.backgroundColor = '#fff';
+      lastGlowedId = activeId;
+    } else {
+      lastGlowedId = null;
+    }
   }, 100);
 }
 
-// Sync all input values to currentEstimateItems
-// ALWAYS reads from inputs and calculates amounts
-function syncInputsToData() {
-  const tbody = document.getElementById('items-tbody');
+function resetGlowTracking() {
+  lastGlowedId = null;
+}
+
+function applyFocusFixToAll() {
+  startGlowPolling();
+}
+
+function addRow() {
+  var idx = estimateItems.length;
+  estimateItems.push({ item_name: '', description: '', hsn_code: '', quantity: 0, unit: 'kg', rate: 0, amount: 0 });
+  renderTable();
+  setTimeout(function() {
+    var inp = document.getElementById('name-' + idx);
+    if (inp) inp.focus();
+  }, 100);
+}
+
+function renderTable() {
+  var tbody = document.getElementById('items-tbody');
   if (!tbody) return;
 
-  const rows = tbody.querySelectorAll('tr');
-  let needsUpdate = false;
+  // Reset glow tracking since we're destroying and recreating elements
+  resetGlowTracking();
 
-  rows.forEach((row, index) => {
-    if (!currentEstimateItems[index]) return;
+  var html = '';
+  for (var i = 0; i < estimateItems.length; i++) {
+    var item = estimateItems[i];
+    var hsn = item.hsn_code ? ' | HSN: ' + item.hsn_code : '';
+    var desc = (item.description || '') + hsn;
 
-    const itemNameInput = row.querySelector('.item-name-input');
-    const itemDescInput = row.querySelector('.item-desc-input');
-    const qtyInput = row.querySelector('.qty-input');
-    const rateInput = row.querySelector('.rate-input');
-    const unitSelect = row.querySelector('.unit-select');
-
-    // Sync item name from input
-    if (itemNameInput) {
-      const newName = itemNameInput.value.trim();
-      if (currentEstimateItems[index].item_name !== newName) {
-        currentEstimateItems[index].item_name = newName;
-      }
+    html += '<tr>';
+    html += '<td style="text-align:center">' + (i + 1) + '</td>';
+    html += '<td>';
+    html += '<input type="text" id="name-' + i + '" value="' + esc(item.item_name) + '" placeholder="Type item..." list="items-list-' + i + '" style="width:100%;padding:8px;margin-bottom:4px;border:1px solid #ddd;border-radius:4px">';
+    html += '<datalist id="items-list-' + i + '">';
+    for (var j = 0; j < masterItems.length; j++) {
+      html += '<option value="' + esc(masterItems[j].name) + '">';
     }
-
-    // Sync description from input (strip HSN for storage)
-    if (itemDescInput) {
-      const newDesc = itemDescInput.value.replace(/\s*\|\s*HSN:\s*\d+\s*$/, '').trim();
-      if (currentEstimateItems[index].description !== newDesc) {
-        currentEstimateItems[index].description = newDesc;
-      }
-    }
-
-    // Always sync qty from input
-    if (qtyInput) {
-      const newQty = parseFloat(qtyInput.value) || 0;
-      if (currentEstimateItems[index].quantity !== newQty) {
-        currentEstimateItems[index].quantity = newQty;
-        needsUpdate = true;
-      }
-    }
-
-    // Always sync rate from input
-    if (rateInput) {
-      const newRate = parseFloat(rateInput.value) || 0;
-      if (currentEstimateItems[index].rate !== newRate) {
-        currentEstimateItems[index].rate = newRate;
-        needsUpdate = true;
-      }
-    }
-
-    // Always sync unit
-    if (unitSelect) {
-      currentEstimateItems[index].unit = unitSelect.value;
-    }
-
-    // Calculate and update amount
-    const qty = currentEstimateItems[index].quantity || 0;
-    const rate = currentEstimateItems[index].rate || 0;
-    const newAmount = qty * rate;
-
-    if (currentEstimateItems[index].amount !== newAmount) {
-      currentEstimateItems[index].amount = newAmount;
-      const amountEl = document.getElementById(`item-amount-${index}`);
-      if (amountEl) {
-        amountEl.textContent = `₹${newAmount.toFixed(2)}`;
-      }
-      needsUpdate = true;
-    }
-  });
-
-  // Update totals if anything changed
-  if (needsUpdate) {
-    updateTotals();
-  }
-}
-
-// Update just the amount display without touching inputs
-function updateItemAmountDisplay(index) {
-  const item = currentEstimateItems[index];
-  if (!item) return;
-
-  item.amount = item.quantity * item.rate;
-  const amountEl = document.getElementById(`item-amount-${index}`);
-  if (amountEl) {
-    amountEl.textContent = `₹${item.amount.toFixed(2)}`;
-  }
-  updateTotals();
-}
-
-// Simple event delegation - for text inputs, selects and buttons
-function setupItemsTableDelegation() {
-  const tbody = document.getElementById('items-tbody');
-  if (!tbody) {
-    console.error('items-tbody not found!');
-    return;
-  }
-
-  // Handle input events for item name (to detect datalist selection)
-  tbody.addEventListener('input', (e) => {
-    const target = e.target;
-    if (!target.dataset || target.dataset.index === undefined) return;
-    const index = parseInt(target.dataset.index);
-    if (isNaN(index)) return;
-
-    if (target.classList.contains('item-name-input')) {
-      const itemName = target.value.trim();
-      if (!itemName) return;
-
-      // Check if this matches a master item (user selected from dropdown)
-      const masterItem = masterItems.find(i => i.name === itemName);
-      if (masterItem) {
-        handleItemNameSelection(index, itemName);
-      } else {
-        // User is typing custom item name
-        if (currentEstimateItems[index]) {
-          currentEstimateItems[index].item_name = itemName;
-        }
-      }
-    }
-
-    if (target.classList.contains('item-desc-input')) {
-      // User is editing description
-      if (currentEstimateItems[index]) {
-        updateItemDescription(index, target.value);
-      }
-    }
-  });
-
-  // Handle change events (fires when user leaves input or selects from datalist)
-  tbody.addEventListener('change', (e) => {
-    const target = e.target;
-    if (!target.dataset || target.dataset.index === undefined) return;
-    const index = parseInt(target.dataset.index);
-    if (isNaN(index)) return;
-
-    if (target.classList.contains('item-name-input')) {
-      const itemName = target.value.trim();
-      if (!itemName) return;
-
-      // Check if this matches a master item
-      const masterItem = masterItems.find(i => i.name === itemName);
-      if (masterItem) {
-        handleItemNameSelection(index, itemName);
-      }
-    }
-  });
-
-  // Handle blur events as backup (fires when user clicks away from input)
-  tbody.addEventListener('focusout', (e) => {
-    const target = e.target;
-    if (!target.dataset || target.dataset.index === undefined) return;
-    const index = parseInt(target.dataset.index);
-    if (isNaN(index)) return;
-
-    if (target.classList.contains('item-name-input')) {
-      const itemName = target.value.trim();
-      if (!itemName) return;
-
-      // Check if this matches a master item
-      const masterItem = masterItems.find(i => i.name === itemName);
-      if (masterItem && currentEstimateItems[index]) {
-        // Only auto-fill if rate is still 0 (not already filled)
-        if (currentEstimateItems[index].rate === 0) {
-          handleItemNameSelection(index, itemName);
-        }
-      }
-    }
-  });
-
-  // Handle click events (for remove buttons)
-  tbody.addEventListener('click', (e) => {
-    const target = e.target;
-    if (target.classList.contains('remove-btn')) {
-      const index = parseInt(target.dataset.index);
-      if (!isNaN(index)) {
-        removeItemRow(index);
-      }
-    }
-  });
-}
-
-// Event Listeners
-function setupEventListeners() {
-  // Navigation
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const view = e.currentTarget.dataset.view;
-      switchView(view);
+    html += '</datalist>';
+    html += '<input type="text" id="desc-' + i + '" value="' + esc(desc) + '" placeholder="Description" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:12px">';
+    html += '</td>';
+    html += '<td><input type="text" id="qty-' + i + '" value="' + (item.quantity || '') + '" placeholder="0" inputmode="decimal" style="width:70px;padding:8px;text-align:center;border:1px solid #ddd;border-radius:4px"></td>';
+    html += '<td><select id="unit-' + i + '" style="padding:8px;border:1px solid #ddd;border-radius:4px">';
+    ['kg', 'pcs', 'nos', 'bundle', 'coil', 'meter'].forEach(function(u) {
+      html += '<option value="' + u + '"' + (item.unit === u ? ' selected' : '') + '>' + u + '</option>';
     });
-  });
-
-  // New Estimate
-  const addItemBtn = document.getElementById('add-item-row-btn');
-  const saveEstimateBtn = document.getElementById('save-estimate-btn');
-  const saveAndPrintBtn = document.getElementById('save-and-print-btn');
-  const previewBtn = document.getElementById('preview-estimate-btn');
-  const emailPdfBtn = document.getElementById('email-pdf-btn');
-  const downloadPdfBtn = document.getElementById('download-pdf-btn');
-
-  if (addItemBtn) addItemBtn.addEventListener('click', addItemRow);
-  if (saveEstimateBtn) saveEstimateBtn.addEventListener('click', saveEstimate);
-  if (saveAndPrintBtn) saveAndPrintBtn.addEventListener('click', saveAndPrint);
-  if (previewBtn) previewBtn.addEventListener('click', showPrintPreview);
-  if (emailPdfBtn) emailPdfBtn.addEventListener('click', showEmailModal);
-  if (downloadPdfBtn) downloadPdfBtn.addEventListener('click', downloadPDF);
-
-  // Print from preview
-  const printFromPreviewBtn = document.getElementById('print-from-preview-btn');
-  if (printFromPreviewBtn) {
-    printFromPreviewBtn.addEventListener('click', printFromPreview);
+    html += '</select></td>';
+    html += '<td><input type="text" id="rate-' + i + '" value="' + (item.rate || '') + '" placeholder="0" inputmode="decimal" style="width:90px;padding:8px;text-align:right;border:1px solid #ddd;border-radius:4px"></td>';
+    html += '<td style="text-align:right;font-weight:600" id="amt-' + i + '">₹' + (item.amount || 0).toFixed(2) + '</td>';
+    html += '<td><button onclick="removeRow(' + i + ')" style="background:#e53e3e;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer">Remove</button></td>';
+    html += '</tr>';
   }
 
-  // Send email
-  const sendEmailBtn = document.getElementById('send-email-btn');
-  if (sendEmailBtn) {
-    sendEmailBtn.addEventListener('click', sendEmail);
+  tbody.innerHTML = html;
+
+  // Bind ONLY select elements - no input events to avoid freeze
+  for (var i = 0; i < estimateItems.length; i++) {
+    bindSelectOnly(i);
   }
 
-  // Auto-rounding button
-  const autoRoundBtn = document.getElementById('auto-round-btn');
-  if (autoRoundBtn) {
-    autoRoundBtn.addEventListener('click', autoCalculateRounding);
-  }
+  calcTotals();
 
-  // Items Management
-  const addNewItemBtn = document.getElementById('add-new-item-btn');
-  const saveItemBtn = document.getElementById('save-item-btn');
-  if (addNewItemBtn) addNewItemBtn.addEventListener('click', () => openItemModal());
-  if (saveItemBtn) saveItemBtn.addEventListener('click', saveItem);
-
-  // Modal
-  document.querySelectorAll('.close').forEach(el => {
-    el.addEventListener('click', closeItemModal);
-  });
-
-  // Date default
-  const estimateDateEl = document.getElementById('estimate-date');
-  if (estimateDateEl) estimateDateEl.valueAsDate = new Date();
+  // Apply focus fix to any remaining inputs
+  applyFocusFixToAll();
 }
 
-// Auto-calculate rounding
-function autoCalculateRounding() {
-  const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
-  // User enters negative to subtract, positive to add
-  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
-  const beforeRounding = subTotal + advancedPayment;
-
-  // Round to nearest whole number
-  const rounded = Math.round(beforeRounding);
-  const roundingAmount = rounded - beforeRounding;
-
-  document.getElementById('rounding').value = roundingAmount.toFixed(2);
-  updateTotals();
+function bindSelectOnly(idx) {
+  var unitEl = document.getElementById('unit-' + idx);
+  if (unitEl) {
+    unitEl.onchange = function() {
+      estimateItems[idx].unit = this.value;
+    };
+  }
 }
 
-// View Switching
-function switchView(view) {
-  currentView = view;
+// Polling function - syncs input values every 500ms WITHOUT affecting focus
+var syncInterval = null;
+function startInputSync() {
+  if (syncInterval) return;
+  syncInterval = setInterval(function() {
+    var activeEl = document.activeElement;
+    var activeId = activeEl ? activeEl.id : '';
 
-  // Update nav buttons
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.classList.remove('active');
-    if (btn.dataset.view === view) {
-      btn.classList.add('active');
+    for (var i = 0; i < estimateItems.length; i++) {
+      var nameEl = document.getElementById('name-' + i);
+      var descEl = document.getElementById('desc-' + i);
+      var qtyEl = document.getElementById('qty-' + i);
+      var rateEl = document.getElementById('rate-' + i);
+      var unitEl = document.getElementById('unit-' + i);
+
+      // Only sync if NOT currently focused (to avoid interfering with typing)
+      if (nameEl && activeId !== 'name-' + i) {
+        var newName = nameEl.value;
+        if (newName !== estimateItems[i].item_name) {
+          estimateItems[i].item_name = newName;
+          // Check for master item match
+          var m = masterItems.find(function(x) { return x.name === newName; });
+          if (m) {
+            estimateItems[i].description = m.description || '';
+            estimateItems[i].hsn_code = m.hsn_code || '';
+            estimateItems[i].rate = m.rate || 0;
+            estimateItems[i].unit = m.unit || 'kg';
+            if (descEl && activeId !== 'desc-' + i) descEl.value = (m.description || '') + (m.hsn_code ? ' | HSN: ' + m.hsn_code : '');
+            if (rateEl && activeId !== 'rate-' + i) rateEl.value = m.rate || '';
+            if (unitEl) unitEl.value = m.unit || 'kg';
+          }
+        }
+      }
+
+      if (descEl && activeId !== 'desc-' + i) {
+        estimateItems[i].description = descEl.value.replace(/\s*\|\s*HSN:\s*\S+\s*$/, '');
+      }
+
+      if (qtyEl && activeId !== 'qty-' + i) {
+        var newQty = parseFloat(qtyEl.value) || 0;
+        if (newQty !== estimateItems[i].quantity) {
+          estimateItems[i].quantity = newQty;
+          calcRowSilent(i);
+        }
+      }
+
+      if (rateEl && activeId !== 'rate-' + i) {
+        var newRate = parseFloat(rateEl.value) || 0;
+        if (newRate !== estimateItems[i].rate) {
+          estimateItems[i].rate = newRate;
+          calcRowSilent(i);
+        }
+      }
+
+      if (unitEl) {
+        estimateItems[i].unit = unitEl.value;
+      }
+    }
+
+    calcTotals();
+  }, 500);
+}
+
+// Silent calc - only updates amount display, no other DOM changes
+function calcRowSilent(idx) {
+  var item = estimateItems[idx];
+  if (!item) return;
+  item.amount = (item.quantity || 0) * (item.rate || 0);
+  var el = document.getElementById('amt-' + idx);
+  if (el) el.textContent = '₹' + item.amount.toFixed(2);
+}
+
+window.removeRow = function(idx) {
+  estimateItems.splice(idx, 1);
+  renderTable();
+};
+
+function calcTotals() {
+  var sub = 0, kg = 0;
+  for (var i = 0; i < estimateItems.length; i++) {
+    sub += estimateItems[i].amount || 0;
+    if (estimateItems[i].unit === 'kg') kg += estimateItems[i].quantity || 0;
+  }
+  var advEl = document.getElementById('advanced-payment');
+  var prevBalEl = document.getElementById('previous-balance');
+  var rndEl = document.getElementById('rounding');
+  var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
+  var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
+  var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
+  // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
+  // Previous Balance adds to Sub Total, Advance (negative) subtracts
+  var total = sub + prevBal + adv + rnd;
+
+  var el;
+  el = document.getElementById('sub-total'); if (el) el.textContent = '₹' + sub.toFixed(2);
+  el = document.getElementById('grand-total'); if (el) el.textContent = '₹' + total.toFixed(2);
+  el = document.getElementById('total-kg'); if (el) el.textContent = kg.toFixed(2) + ' kg';
+  el = document.getElementById('total-words'); if (el) el.textContent = 'Total In Words: ' + numToWords(Math.abs(total));
+}
+
+function autoRound() {
+  var sub = 0;
+  for (var i = 0; i < estimateItems.length; i++) sub += estimateItems[i].amount || 0;
+  var advEl = document.getElementById('advanced-payment');
+  var prevBalEl = document.getElementById('previous-balance');
+  var rndEl = document.getElementById('rounding');
+  var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
+  var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
+  // Round to nearest whole number (Sub Total + Previous Balance + Advance)
+  var beforeRound = sub + prevBal + adv;
+  if (rndEl) rndEl.value = (Math.round(beforeRound) - beforeRound).toFixed(2);
+  calcTotals();
+}
+
+function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+// ============ FORM ============
+async function setNewEstimateNumber() {
+  var num = await ipcRenderer.invoke('get-next-estimate-number');
+  var el = document.getElementById('estimate-number');
+  if (el) el.value = num;
+}
+
+function setTodayDate() {
+  var el = document.getElementById('estimate-date');
+  if (el) {
+    var d = new Date();
+    el.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+}
+
+async function loadCustomerDropdown() {
+  var customers = await ipcRenderer.invoke('get-customers');
+  var dl = document.getElementById('customer-list');
+  if (dl) {
+    dl.innerHTML = '';
+    customers.forEach(function(c) { dl.innerHTML += '<option value="' + esc(c.name) + '">'; });
+  }
+}
+
+// Handle customer search - filter and show matching customers as user types
+async function handleCustomerSearch() {
+  var el = document.getElementById('customer-search');
+  if (!el) return;
+  var searchTerm = el.value.toLowerCase().trim();
+  if (!searchTerm) return;
+
+  var customers = await ipcRenderer.invoke('get-customers');
+  var dl = document.getElementById('customer-list');
+  if (dl) {
+    dl.innerHTML = '';
+    // Filter customers whose name starts with or contains the search term
+    customers.forEach(function(c) {
+      var name = c.name || '';
+      if (name.toLowerCase().indexOf(searchTerm) !== -1) {
+        dl.innerHTML += '<option value="' + esc(name) + '">';
+      }
+    });
+  }
+
+  // Auto-fill if exact match found
+  var exactMatch = customers.find(function(c) {
+    return c.name && c.name.toLowerCase() === searchTerm;
+  });
+  if (exactMatch) {
+    var nameEl = document.getElementById('bill-to-name');
+    var addrEl = document.getElementById('bill-to-address');
+    if (nameEl) nameEl.value = exactMatch.name;
+    if (addrEl) addrEl.value = [exactMatch.address, exactMatch.city, exactMatch.state, exactMatch.country].filter(Boolean).join(', ');
+  }
+}
+
+async function handleCustomerSelect() {
+  var el = document.getElementById('customer-search');
+  if (!el) return;
+  var customers = await ipcRenderer.invoke('get-customers');
+  var c = customers.find(function(x) { return x.name === el.value; });
+  if (c) {
+    var nameEl = document.getElementById('bill-to-name');
+    var addrEl = document.getElementById('bill-to-address');
+    if (nameEl) nameEl.value = c.name;
+    if (addrEl) addrEl.value = [c.address, c.city, c.state, c.country].filter(Boolean).join(', ');
+  }
+}
+
+async function resetForm() {
+  editingId = null;
+  estimateItems = [];
+
+  // Reset glow tracking for new estimate
+  resetGlowTracking();
+
+  await setNewEstimateNumber();
+  setTodayDate();
+
+  // Reset all form fields
+  ['bill-to-name', 'bill-to-address', 'customer-search', 'advanced-payment', 'previous-balance', 'rounding'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.value = '';
+      el.style.borderColor = '#ddd';
+      el.style.borderWidth = '1px';
+      el.style.boxShadow = 'none';
+      el.style.backgroundColor = '#fff';
     }
   });
 
-  // Update views
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById(`${view}-view`).classList.add('active');
+  await loadCustomerDropdown();
+  addRow();
+}
 
-  // Load data for view
-  if (view === 'dashboard') {
-    loadDashboard();
-  } else if (view === 'estimates') {
-    loadEstimates();
-  } else if (view === 'customers') {
-    loadCustomers();
-  } else if (view === 'items') {
-    loadItemsTable();
-  } else if (view === 'new-estimate') {
-    initializeNewEstimate();
+// ============ SAVE ============
+async function saveEstimate() {
+  var nameEl = document.getElementById('bill-to-name');
+  if (!nameEl || !nameEl.value.trim()) { alert('Please enter Bill To name'); return; }
+
+  // Sync all inputs before save
+  syncAllInputs();
+
+  var valid = estimateItems.filter(function(x) { return x.quantity > 0; });
+  if (valid.length === 0) { alert('Please add at least one item with quantity'); return; }
+
+  var sub = 0;
+  valid.forEach(function(x) { sub += x.amount; });
+  var advEl = document.getElementById('advanced-payment');
+  var prevBalEl = document.getElementById('previous-balance');
+  var rndEl = document.getElementById('rounding');
+  var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
+  var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
+  var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
+
+  // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
+  var total = sub + prevBal + adv + rnd;
+  var data = {
+    estimate_number: document.getElementById('estimate-number').value,
+    estimate_date: document.getElementById('estimate-date').value,
+    bill_to_name: nameEl.value.trim(),
+    bill_to_address: document.getElementById('bill-to-address').value || '',
+    sub_total: sub,
+    advanced_payment: adv,
+    previous_balance: prevBal,
+    rounding: rnd,
+    total: total,
+    total_in_words: numToWords(Math.abs(total)),
+    items: valid
+  };
+
+  try {
+    if (editingId) {
+      data.id = editingId;
+      await ipcRenderer.invoke('update-estimate', data);
+      alert('Estimate updated!');
+    } else {
+      await ipcRenderer.invoke('save-estimate', data);
+      alert('Estimate saved!');
+    }
+    await resetForm();
+  } catch (e) {
+    alert('Error: ' + e.message);
   }
 }
 
-// Master Items
-async function loadMasterItems() {
-  masterItems = await ipcRenderer.invoke('get-items');
+async function saveAndPrint() {
+  var nameEl = document.getElementById('bill-to-name');
+  if (!nameEl || !nameEl.value.trim()) { alert('Please enter Bill To name'); return; }
+
+  syncAllInputs();
+
+  var valid = estimateItems.filter(function(x) { return x.quantity > 0; });
+  if (valid.length === 0) { alert('Please add at least one item with quantity'); return; }
+
+  var btn = document.getElementById('save-and-print-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+
+  try {
+    var sub = 0;
+    valid.forEach(function(x) { sub += x.amount; });
+    var advEl = document.getElementById('advanced-payment');
+    var prevBalEl = document.getElementById('previous-balance');
+    var rndEl = document.getElementById('rounding');
+    var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
+    var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
+    var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
+
+    // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
+    var total = sub + prevBal + adv + rnd;
+    var data = {
+      estimate_number: document.getElementById('estimate-number').value,
+      estimate_date: document.getElementById('estimate-date').value,
+      bill_to_name: nameEl.value.trim(),
+      bill_to_address: document.getElementById('bill-to-address').value || '',
+      sub_total: sub,
+      advanced_payment: adv,
+      previous_balance: prevBal,
+      rounding: rnd,
+      total: total,
+      total_in_words: numToWords(Math.abs(total)),
+      items: valid
+    };
+
+    if (editingId) {
+      data.id = editingId;
+      await ipcRenderer.invoke('update-estimate', data);
+    } else {
+      await ipcRenderer.invoke('save-estimate', data);
+    }
+
+    await printEst();
+    await resetForm();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Save & Print'; }
+  }
 }
 
-async function loadItemsTable() {
-  await loadMasterItems();
-  const tbody = document.getElementById('items-master-tbody');
+function syncAllInputs() {
+  for (var i = 0; i < estimateItems.length; i++) {
+    var nameEl = document.getElementById('name-' + i);
+    var descEl = document.getElementById('desc-' + i);
+    var qtyEl = document.getElementById('qty-' + i);
+    var rateEl = document.getElementById('rate-' + i);
+    var unitEl = document.getElementById('unit-' + i);
+
+    if (nameEl) estimateItems[i].item_name = nameEl.value;
+    if (descEl) estimateItems[i].description = descEl.value.replace(/\s*\|\s*HSN:\s*\S+\s*$/, '');
+    if (qtyEl) estimateItems[i].quantity = parseFloat(qtyEl.value) || 0;
+    if (rateEl) estimateItems[i].rate = parseFloat(rateEl.value) || 0;
+    if (unitEl) estimateItems[i].unit = unitEl.value;
+    estimateItems[i].amount = estimateItems[i].quantity * estimateItems[i].rate;
+  }
+}
+
+// ============ PRINT & PDF ============
+async function printEst() {
+  syncAllInputs();
+  var html = genPrintHTML();
+  try {
+    var r = await ipcRenderer.invoke('print-estimate', html, 'System Default');
+    if (r.success) alert('Printed!');
+    else if (!r.cancelled) alert('Print failed');
+  } catch (e) {
+    alert('Print error: ' + e.message);
+  }
+}
+
+function showPreview() {
+  syncAllInputs();
+  var frame = document.getElementById('preview-frame');
+  if (frame) frame.srcdoc = genPrintHTML();
+  var modal = document.getElementById('print-preview-modal');
+  if (modal) modal.classList.add('active');
+}
+
+async function printFromPreview() {
+  var frame = document.getElementById('preview-frame');
+  if (!frame) return;
+  try {
+    var r = await ipcRenderer.invoke('print-estimate', frame.srcdoc, 'System Default');
+    if (r.success) {
+      alert('Printed!');
+      document.getElementById('print-preview-modal').classList.remove('active');
+    }
+  } catch (e) {
+    alert('Print error: ' + e.message);
+  }
+}
+
+async function downloadPDF() {
+  var nameEl = document.getElementById('bill-to-name');
+  if (!nameEl || !nameEl.value.trim()) { alert('Please enter Bill To name'); return; }
+  syncAllInputs();
+  var valid = estimateItems.filter(function(x) { return x.quantity > 0; });
+  if (valid.length === 0) { alert('Please add at least one item'); return; }
+
+  try {
+    var doc = genPDFDoc();
+    var num = document.getElementById('estimate-number').value;
+    var pdfData = doc.output('datauristring').split(',')[1];
+    var r = await ipcRenderer.invoke('save-pdf', pdfData, 'Estimate_' + num + '.pdf');
+    if (r.success) alert('Saved to:\n' + r.path);
+  } catch (e) {
+    alert('PDF error: ' + e.message);
+  }
+}
+
+// ============ MASTER ITEMS ============
+async function loadItemsList() {
+  masterItems = await ipcRenderer.invoke('get-items');
+  var tbody = document.getElementById('items-master-tbody');
+  if (!tbody) return;
 
   if (masterItems.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><h3>No items yet</h3><p>Click "Add New Item" to get started</p></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px">No items</td></tr>';
     return;
   }
 
-  tbody.innerHTML = masterItems.map(item => `
-    <tr>
-      <td style="text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.name}</td>
-      <td style="text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${item.description || ''}">${item.description || '-'}</td>
-      <td style="text-align: right;">₹${parseFloat(item.rate).toFixed(2)}</td>
-      <td style="text-align: center;">${item.unit}</td>
-      <td style="text-align: right; color: ${(item.available_qty || 0) <= 0 ? '#e53e3e' : '#48bb78'}; font-weight: 600;">${parseFloat(item.available_qty || 0).toFixed(2)}</td>
-      <td style="text-align: center;">
-        <button class="btn btn-edit btn-small" onclick="editItem(${item.id})">Edit</button>
-        <button class="btn btn-danger btn-small" onclick="deleteItem(${item.id})">Delete</button>
-      </td>
-    </tr>
-  `).join('');
+  var html = '';
+  masterItems.forEach(function(x) {
+    html += '<tr>';
+    html += '<td>' + esc(x.name) + '</td>';
+    html += '<td>' + esc(x.description || '-') + '</td>';
+    html += '<td style="text-align:right">₹' + parseFloat(x.rate).toFixed(2) + '</td>';
+    html += '<td style="text-align:center">' + x.unit + '</td>';
+    html += '<td style="text-align:right">' + parseFloat(x.available_qty || 0).toFixed(2) + '</td>';
+    html += '<td style="text-align:center"><button class="btn btn-small" onclick="editMasterItem(' + x.id + ')">Edit</button> <button class="btn btn-danger btn-small" onclick="deleteMasterItem(' + x.id + ')">Delete</button></td>';
+    html += '</tr>';
+  });
+  tbody.innerHTML = html;
 }
 
-function openItemModal(item = null) {
-  const modal = document.getElementById('item-modal');
-  const title = document.getElementById('modal-title');
-
-  if (item) {
-    title.textContent = 'Edit Item';
-    document.getElementById('modal-item-id').value = item.id;
-    document.getElementById('modal-item-name').value = item.name;
-    document.getElementById('modal-item-description').value = item.description || '';
-    document.getElementById('modal-item-hsn').value = item.hsn_code || '';
-    document.getElementById('modal-item-rate').value = item.rate;
-    document.getElementById('modal-item-unit').value = item.unit;
-    document.getElementById('modal-item-available-qty').value = item.available_qty || '';
-  } else {
-    title.textContent = 'Add New Item';
-    document.getElementById('modal-item-id').value = '';
-    document.getElementById('modal-item-name').value = '';
-    document.getElementById('modal-item-description').value = '';
-    document.getElementById('modal-item-hsn').value = '';
-    document.getElementById('modal-item-rate').value = '';
-    document.getElementById('modal-item-unit').value = 'kg';
-    document.getElementById('modal-item-available-qty').value = '';
-  }
-
+function openItemModal(item) {
+  var modal = document.getElementById('item-modal');
+  document.getElementById('modal-title').textContent = item ? 'Edit Item' : 'Add New Item';
+  document.getElementById('modal-item-id').value = item ? item.id : '';
+  document.getElementById('modal-item-name').value = item ? item.name : '';
+  document.getElementById('modal-item-description').value = item ? item.description : '';
+  document.getElementById('modal-item-hsn').value = item ? item.hsn_code : '';
+  document.getElementById('modal-item-rate').value = item ? item.rate : '';
+  document.getElementById('modal-item-unit').value = item ? item.unit : 'kg';
+  document.getElementById('modal-item-available-qty').value = item ? item.available_qty : '';
   modal.classList.add('active');
-}
-
-function closeItemModal() {
-  document.getElementById('item-modal').classList.remove('active');
+  // Apply focus fix to modal inputs
+  setTimeout(applyFocusFixToAll, 100);
 }
 
 async function saveItem() {
-  const id = document.getElementById('modal-item-id').value;
-  const item = {
+  var id = document.getElementById('modal-item-id').value;
+  var item = {
     name: document.getElementById('modal-item-name').value,
     description: document.getElementById('modal-item-description').value,
-    hsn_code: document.getElementById('modal-item-hsn').value || '',
+    hsn_code: document.getElementById('modal-item-hsn').value,
     rate: parseFloat(document.getElementById('modal-item-rate').value),
     unit: document.getElementById('modal-item-unit').value,
     available_qty: parseFloat(document.getElementById('modal-item-available-qty').value) || 0
   };
-
-  if (!item.name || !item.rate) {
-    alert('Please fill in all required fields');
-    return;
-  }
+  if (!item.name || !item.rate) { alert('Please fill required fields'); return; }
 
   if (id) {
     item.id = parseInt(id);
@@ -439,1200 +769,201 @@ async function saveItem() {
     await ipcRenderer.invoke('add-item', item);
   }
 
-  closeItemModal();
-  await loadMasterItems();
-  loadItemsTable();
+  document.getElementById('item-modal').classList.remove('active');
+  masterItems = await ipcRenderer.invoke('get-items');
+  loadItemsList();
 }
 
-async function editItem(id) {
-  const item = masterItems.find(i => i.id === id);
-  if (item) {
-    openItemModal(item);
-  }
-}
+window.editMasterItem = async function(id) {
+  var item = masterItems.find(function(x) { return x.id === id; });
+  if (item) openItemModal(item);
+};
 
-async function deleteItem(id) {
-  if (confirm('Are you sure you want to delete this item?')) {
+window.deleteMasterItem = async function(id) {
+  if (confirm('Delete this item?')) {
     await ipcRenderer.invoke('delete-item', id);
-    await loadMasterItems();
-    loadItemsTable();
+    masterItems = await ipcRenderer.invoke('get-items');
+    loadItemsList();
   }
+};
+
+// ============ CUSTOMERS ============
+function openCustomerModal(c) {
+  var modal = document.getElementById('customer-modal');
+  document.getElementById('customer-modal-title').textContent = c ? 'Edit Customer' : 'Add Customer';
+  document.getElementById('modal-customer-id').value = c ? c.id : '';
+  document.getElementById('modal-customer-name').value = c ? c.name : '';
+  document.getElementById('modal-customer-address').value = c ? c.address : '';
+  document.getElementById('modal-customer-city').value = c ? c.city : '';
+  document.getElementById('modal-customer-state').value = c ? c.state : 'Tamil Nadu';
+  document.getElementById('modal-customer-country').value = c ? c.country : 'India';
+  document.getElementById('modal-customer-phone').value = c ? c.phone : '';
+  document.getElementById('modal-customer-email').value = c ? c.email : '';
+  document.getElementById('modal-customer-vehicle').value = c ? c.vehicle : '';
+  document.getElementById('modal-customer-gstn').value = c ? c.gstn : '';
+  document.getElementById('modal-customer-opening-balance').value = c ? c.opening_balance : '';
+  modal.classList.add('active');
+  // Apply focus fix to modal inputs
+  setTimeout(applyFocusFixToAll, 100);
 }
 
-// Get current date in IST (Indian Standard Time) as YYYY-MM-DD string
-function getISTDateString() {
-  const now = new Date();
-  // IST is UTC+5:30
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const istDate = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + istOffset);
-  return istDate.toISOString().split('T')[0];
-}
+async function saveCustomer() {
+  var id = document.getElementById('modal-customer-id').value;
+  var name = document.getElementById('modal-customer-name').value.trim();
+  if (!name) { alert('Please enter customer name'); return; }
 
-// New Estimate
-async function initializeNewEstimate() {
-  // Reset editing mode
-  editingEstimateId = null;
+  var data = {
+    name: name,
+    address: document.getElementById('modal-customer-address').value.trim(),
+    city: document.getElementById('modal-customer-city').value.trim(),
+    state: document.getElementById('modal-customer-state').value.trim(),
+    country: document.getElementById('modal-customer-country').value.trim(),
+    phone: document.getElementById('modal-customer-phone').value.trim(),
+    email: document.getElementById('modal-customer-email').value.trim(),
+    vehicle: document.getElementById('modal-customer-vehicle').value.trim(),
+    gstn: document.getElementById('modal-customer-gstn').value.trim(),
+    opening_balance: parseFloat(document.getElementById('modal-customer-opening-balance').value) || 0
+  };
 
-  const estimateNumber = await ipcRenderer.invoke('get-next-estimate-number');
-  document.getElementById('estimate-number').value = estimateNumber;
-  document.getElementById('estimate-date').value = getISTDateString();
-  document.getElementById('bill-to-name').value = '';
-  document.getElementById('bill-to-address').value = '';
-
-  // Clear customer search
-  const customerSearch = document.getElementById('customer-search');
-  if (customerSearch) {
-    customerSearch.value = '';
+  if (id) {
+    data.id = parseInt(id);
+    await ipcRenderer.invoke('update-customer', data);
+  } else {
+    await ipcRenderer.invoke('add-customer', data);
   }
 
-  // Clear advanced payment and rounding
-  const advancedPayment = document.getElementById('advanced-payment');
-  const rounding = document.getElementById('rounding');
-  if (advancedPayment) advancedPayment.value = '';
-  if (rounding) rounding.value = '';
-
-  // Load customer dropdown
+  document.getElementById('customer-modal').classList.remove('active');
   await loadCustomerDropdown();
-
-  currentEstimateItems = [];
-  document.getElementById('items-tbody').innerHTML = '';
-
-  // Add first row
-  addItemRow();
-  updateTotals();
+  loadCustomersList();
 }
 
-// Load customers into dropdown (datalist)
-async function loadCustomerDropdown() {
-  const customers = await ipcRenderer.invoke('get-customers');
-  const datalist = document.getElementById('customer-list');
+async function loadCustomersList() {
+  var customers = await ipcRenderer.invoke('get-customers');
+  var estimates = await ipcRenderer.invoke('get-estimates');
+  var tbody = document.getElementById('customers-tbody');
+  if (!tbody) return;
 
-  if (!datalist) {
-    console.warn('Customer datalist not found');
+  if (customers.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px">No customers</td></tr>';
     return;
   }
 
-  datalist.innerHTML = '';
-
-  customers.forEach(customer => {
-    const option = document.createElement('option');
-    option.value = customer.name;
-    option.dataset.customerId = customer.id;
-    datalist.appendChild(option);
+  var html = '';
+  customers.forEach(function(c) {
+    var ce = estimates.filter(function(e) { return e.bill_to_name === c.name; });
+    var t = 0;
+    ce.forEach(function(e) { t += e.total || 0; });
+    var addr = [c.address, c.city, c.state].filter(Boolean).join(', ');
+    html += '<tr>';
+    html += '<td>' + esc(c.name) + '</td>';
+    html += '<td>' + esc(addr || '-') + '</td>';
+    html += '<td style="text-align:center">' + ce.length + '</td>';
+    html += '<td style="text-align:right">₹' + t.toFixed(2) + '</td>';
+    html += '<td style="text-align:right">₹0.00</td>';
+    html += '<td style="text-align:right">₹' + t.toFixed(2) + '</td>';
+    html += '<td style="text-align:center"><button class="btn btn-small" onclick="editCust(' + c.id + ')">Edit</button> <button class="btn btn-danger btn-small" onclick="delCust(' + c.id + ')">Delete</button></td>';
+    html += '</tr>';
   });
-
-  // Setup customer search input handler
-  const searchInput = document.getElementById('customer-search');
-  if (searchInput && !searchInput.dataset.listenerAdded) {
-    searchInput.addEventListener('change', async (e) => {
-      const selectedName = e.target.value;
-      const customers = await ipcRenderer.invoke('get-customers');
-      const customer = customers.find(c => c.name === selectedName);
-
-      if (customer) {
-        const fullAddress = [
-          customer.address,
-          customer.city,
-          customer.state,
-          customer.country
-        ].filter(Boolean).join(', ');
-
-        document.getElementById('bill-to-name').value = customer.name;
-        document.getElementById('bill-to-address').value = fullAddress;
-      }
-    });
-    searchInput.dataset.listenerAdded = 'true';
-  }
+  tbody.innerHTML = html;
 }
 
-// Select customer from dropdown
-async function selectCustomer(customerId) {
-  if (!customerId) {
-    document.getElementById('bill-to-name').value = '';
-    document.getElementById('bill-to-address').value = '';
-    return;
+window.editCust = async function(id) {
+  var customers = await ipcRenderer.invoke('get-customers');
+  var c = customers.find(function(x) { return x.id === id; });
+  if (c) openCustomerModal(c);
+};
+
+window.delCust = async function(id) {
+  if (confirm('Delete this customer?')) {
+    await ipcRenderer.invoke('delete-customer', id);
+    loadCustomersList();
   }
+};
 
-  const customers = await ipcRenderer.invoke('get-customers');
-  const customer = customers.find(c => c.id == customerId);
-
-  if (customer) {
-    const fullAddress = `${customer.address}${customer.city ? '\n' + customer.city : ''}${customer.state ? ', ' + customer.state : ''}${customer.country ? '\n' + customer.country : ''}`;
-
-    document.getElementById('bill-to-name').value = customer.name;
-    document.getElementById('bill-to-address').value = fullAddress.trim();
-  }
-}
-
-function addItemRow() {
-  const tbody = document.getElementById('items-tbody');
-  if (!tbody) {
-    console.error('items-tbody not found!');
-    return;
-  }
-  const index = currentEstimateItems.length;
-
-  currentEstimateItems.push({
-    item_name: '',
-    description: '',
-    hsn_code: '',
-    quantity: 0,
-    unit: 'kg',
-    rate: 0,
-    amount: 0
-  });
-
-  const row = document.createElement('tr');
-  row.id = `item-row-${index}`;
-  row.innerHTML = `
-    <td style="text-align: center;">${index + 1}</td>
-    <td>
-      <input type="text" class="item-name-input" data-index="${index}" id="item-name-${index}"
-             list="item-list-${index}" placeholder="Type item name..." autocomplete="off">
-      <datalist id="item-list-${index}">
-        ${masterItems.map(item => `<option value="${item.name}">${item.name}</option>`).join('')}
-      </datalist>
-      <input type="text" class="item-desc-input" data-index="${index}" id="item-desc-${index}"
-             placeholder="Description (auto-filled or type here)">
-    </td>
-    <td style="text-align: center;"><input type="text" class="qty-input" data-index="${index}" value="" placeholder="0" style="text-align: center; width: 80px;"></td>
-    <td style="text-align: center;">
-      <select class="unit-select" data-index="${index}">
-        <option value="kg">kg</option>
-        <option value="pcs">pcs</option>
-        <option value="nos">nos</option>
-        <option value="bundle">bundle</option>
-        <option value="coil">coil</option>
-        <option value="meter">meter</option>
-      </select>
-    </td>
-    <td style="text-align: right;"><input type="text" class="rate-input" data-index="${index}" value="0" style="text-align: right; width: 100px;"></td>
-    <td style="text-align: right; font-weight: 600;" id="item-amount-${index}">₹0.00</td>
-    <td style="text-align: center;">
-      <button class="btn btn-danger btn-small remove-btn" data-index="${index}">Remove</button>
-    </td>
-  `;
-
-  tbody.appendChild(row);
-
-  // Add direct event listener for item name input (datalist selection)
-  const itemNameInput = row.querySelector('.item-name-input');
-  if (itemNameInput) {
-    // Listen for input event (fires when typing or selecting from datalist)
-    itemNameInput.addEventListener('input', function() {
-      const itemName = this.value.trim();
-      if (itemName) {
-        const masterItem = masterItems.find(i => i.name === itemName);
-        if (masterItem) {
-          handleItemNameSelection(index, itemName);
-        }
-      }
-    });
-
-    // Also listen for change event as backup
-    itemNameInput.addEventListener('change', function() {
-      const itemName = this.value.trim();
-      if (itemName) {
-        const masterItem = masterItems.find(i => i.name === itemName);
-        if (masterItem) {
-          handleItemNameSelection(index, itemName);
-        }
-      }
-    });
-  }
-
-  // Add direct event listeners for qty and rate inputs
-  const qtyInput = row.querySelector('.qty-input');
-  const rateInput = row.querySelector('.rate-input');
-
-  if (qtyInput) {
-    qtyInput.addEventListener('input', function() {
-      const qty = parseFloat(this.value) || 0;
-      currentEstimateItems[index].quantity = qty;
-      const rate = currentEstimateItems[index].rate || 0;
-      const amount = qty * rate;
-      currentEstimateItems[index].amount = amount;
-      document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
-      updateTotals();
-    });
-  }
-
-  if (rateInput) {
-    rateInput.addEventListener('input', function() {
-      const rate = parseFloat(this.value) || 0;
-      currentEstimateItems[index].rate = rate;
-      const qty = currentEstimateItems[index].quantity || 0;
-      const amount = qty * rate;
-      currentEstimateItems[index].amount = amount;
-      document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
-      updateTotals();
-    });
-  }
-}
-
-function selectItem(index, itemId) {
-  if (!itemId) return;
-
-  const item = masterItems.find(i => i.id == itemId);
-  if (!item) return;
-
-  currentEstimateItems[index].item_name = item.name;
-  currentEstimateItems[index].description = item.description;
-  currentEstimateItems[index].hsn_code = item.hsn_code || '';
-  currentEstimateItems[index].rate = item.rate;
-  currentEstimateItems[index].unit = item.unit;
-
-  // Update description display (include HSN code if available)
-  const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
-  document.getElementById(`item-desc-${index}`).textContent = (item.description || '') + hsnDisplay;
-
-  // Update rate input and unit select
-  const row = document.getElementById('items-tbody').children[index];
-  const rateInput = row.querySelector('.rate-input');
-  const unitSelect = row.querySelector('.unit-select');
-  const qtyInput = row.querySelector('.qty-input');
-
-  rateInput.value = item.rate;
-  unitSelect.value = item.unit;
-
-  updateItemAmount(index);
-
-  // Focus on qty input after selecting item so user can enter quantity
-  setTimeout(() => {
-    qtyInput.focus();
-    qtyInput.select();
-  }, 50);
-}
-
-function updateItemQuantity(index, value) {
-  currentEstimateItems[index].quantity = parseFloat(value) || 0;
-  updateItemAmount(index);
-}
-
-function updateItemUnit(index, value) {
-  currentEstimateItems[index].unit = value;
-}
-
-function updateItemRate(index, value) {
-  currentEstimateItems[index].rate = parseFloat(value) || 0;
-  updateItemAmount(index);
-}
-
-function updateItemAmount(index) {
-  const item = currentEstimateItems[index];
-  item.amount = item.quantity * item.rate;
-  document.getElementById(`item-amount-${index}`).textContent = `₹${item.amount.toFixed(2)}`;
-  updateTotals();
-}
-
-function updateItemName(index, value) {
-  currentEstimateItems[index].item_name = value;
-}
-
-function updateItemDescription(index, value) {
-  // Strip HSN code from description if user edits it
-  currentEstimateItems[index].description = value.replace(/\s*\|\s*HSN:\s*\d+\s*$/, '');
-}
-
-function handleItemNameSelection(index, itemName) {
-  // Find matching master item
-  const item = masterItems.find(i => i.name === itemName);
-  if (!item) return;
-
-  // Auto-fill the item details from master
-  currentEstimateItems[index].item_name = item.name;
-  currentEstimateItems[index].description = item.description || '';
-  currentEstimateItems[index].hsn_code = item.hsn_code || '';
-  currentEstimateItems[index].rate = item.rate || 0;
-  currentEstimateItems[index].unit = item.unit || 'kg';
-
-  // Keep quantity as-is (user will enter it manually)
-
-  // Find the row by ID
-  const row = document.getElementById(`item-row-${index}`);
-  if (!row) return;
-
-  // Update description input with HSN
-  const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
-  const descInput = row.querySelector('.item-desc-input');
-  if (descInput) {
-    descInput.value = (item.description || '') + hsnDisplay;
-  }
-
-  // Update rate input, qty input, and unit select
-  const rateInput = row.querySelector('.rate-input');
-  const unitSelect = row.querySelector('.unit-select');
-  const qtyInput = row.querySelector('.qty-input');
-
-  if (rateInput) {
-    rateInput.value = item.rate || 0;
-  }
-  if (unitSelect) unitSelect.value = item.unit || 'kg';
-  // Don't auto-fill qty - user will enter it manually
-
-  // Calculate and update amount immediately
-  const qty = currentEstimateItems[index].quantity;
-  const rate = currentEstimateItems[index].rate;
-  currentEstimateItems[index].amount = qty * rate;
-
-  const amountEl = document.getElementById(`item-amount-${index}`);
-  if (amountEl) {
-    amountEl.textContent = `₹${currentEstimateItems[index].amount.toFixed(2)}`;
-  }
-
-  // Update totals
-  updateTotals();
-
-  // Focus on qty input after selecting item
-  if (qtyInput) {
-    setTimeout(() => {
-      qtyInput.focus();
-      qtyInput.select();
-    }, 50);
-  }
-}
-
-function removeItemRow(index) {
-  currentEstimateItems.splice(index, 1);
-  renderItemsTable();
-  updateTotals();
-}
-
-function renderItemsTable() {
-  const tbody = document.getElementById('items-tbody');
-  tbody.innerHTML = '';
-
-  currentEstimateItems.forEach((item, index) => {
-    const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
-    const descWithHsn = (item.description || '') + hsnDisplay;
-    const row = document.createElement('tr');
-    row.id = `item-row-${index}`;
-    row.innerHTML = `
-      <td style="text-align: center;">${index + 1}</td>
-      <td>
-        <input type="text" class="item-name-input" data-index="${index}" id="item-name-${index}"
-               list="item-list-${index}" placeholder="Type item name..." autocomplete="off" value="${item.item_name || ''}">
-        <datalist id="item-list-${index}">
-          ${masterItems.map(mItem => `<option value="${mItem.name}">${mItem.name}</option>`).join('')}
-        </datalist>
-        <input type="text" class="item-desc-input" data-index="${index}" id="item-desc-${index}"
-               placeholder="Description (auto-filled or type here)" value="${descWithHsn}">
-      </td>
-      <td style="text-align: center;"><input type="text" class="qty-input" data-index="${index}" value="${item.quantity}" style="text-align: center; width: 80px;"></td>
-      <td style="text-align: center;">
-        <select class="unit-select" data-index="${index}">
-          <option value="kg" ${item.unit === 'kg' ? 'selected' : ''}>kg</option>
-          <option value="pcs" ${item.unit === 'pcs' ? 'selected' : ''}>pcs</option>
-          <option value="nos" ${item.unit === 'nos' ? 'selected' : ''}>nos</option>
-          <option value="bundle" ${item.unit === 'bundle' ? 'selected' : ''}>bundle</option>
-          <option value="coil" ${item.unit === 'coil' ? 'selected' : ''}>coil</option>
-          <option value="meter" ${item.unit === 'meter' ? 'selected' : ''}>meter</option>
-        </select>
-      </td>
-      <td style="text-align: right;"><input type="text" class="rate-input" data-index="${index}" value="${item.rate}" style="text-align: right; width: 100px;"></td>
-      <td style="text-align: right; font-weight: 600;" id="item-amount-${index}">₹${item.amount.toFixed(2)}</td>
-      <td style="text-align: center;">
-        <button class="btn btn-danger btn-small remove-btn" data-index="${index}">Remove</button>
-      </td>
-    `;
-    tbody.appendChild(row);
-
-    // Add direct event listener for item name input
-    const itemNameInput = row.querySelector('.item-name-input');
-    if (itemNameInput) {
-      itemNameInput.addEventListener('input', function() {
-        const itemName = this.value.trim();
-        if (itemName) {
-          const masterItem = masterItems.find(i => i.name === itemName);
-          if (masterItem) {
-            handleItemNameSelection(index, itemName);
-          }
-        }
-      });
-      itemNameInput.addEventListener('change', function() {
-        const itemName = this.value.trim();
-        if (itemName) {
-          const masterItem = masterItems.find(i => i.name === itemName);
-          if (masterItem) {
-            handleItemNameSelection(index, itemName);
-          }
-        }
-      });
-    }
-
-    // Add direct event listeners for qty and rate inputs
-    const qtyInput = row.querySelector('.qty-input');
-    const rateInput = row.querySelector('.rate-input');
-
-    if (qtyInput) {
-      qtyInput.addEventListener('input', function() {
-        const qty = parseFloat(this.value) || 0;
-        currentEstimateItems[index].quantity = qty;
-        const rate = currentEstimateItems[index].rate || 0;
-        const amount = qty * rate;
-        currentEstimateItems[index].amount = amount;
-        document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
-        updateTotals();
-      });
-    }
-
-    if (rateInput) {
-      rateInput.addEventListener('input', function() {
-        const rate = parseFloat(this.value) || 0;
-        currentEstimateItems[index].rate = rate;
-        const qty = currentEstimateItems[index].quantity || 0;
-        const amount = qty * rate;
-        currentEstimateItems[index].amount = amount;
-        document.getElementById(`item-amount-${index}`).textContent = `₹${amount.toFixed(2)}`;
-        updateTotals();
-      });
-    }
-  });
-}
-
-function updateTotals() {
-  const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
-
-  // Calculate total kg (sum of quantities where unit is 'kg')
-  const totalKg = currentEstimateItems.reduce((sum, item) => {
-    if (item.unit === 'kg') {
-      return sum + (parseFloat(item.quantity) || 0);
-    }
-    return sum;
-  }, 0);
-
-  // Get advanced payment and rounding
-  // User enters negative (-10000) to subtract, positive (10000) to add
-  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
-  const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-
-  // advancedPayment sign is respected: negative subtracts, positive adds
-  const total = subTotal + advancedPayment + rounding;
-
-  document.getElementById('sub-total').textContent = `₹${subTotal.toFixed(2)}`;
-  document.getElementById('grand-total').textContent = `₹${total.toFixed(2)}`;
-  document.getElementById('total-kg').textContent = `${totalKg.toFixed(2)} kg`;
-  document.getElementById('total-words').textContent = `Total In Words: ${numberToWords(total)}`;
-}
-
-// Setup event listeners for advanced payment and rounding
-function setupTotalsListeners() {
-  const advPayment = document.getElementById('advanced-payment');
-  const roundingInput = document.getElementById('rounding');
-
-  if (advPayment) {
-    advPayment.addEventListener('input', updateTotals);
-    advPayment.addEventListener('change', updateTotals);
-  }
-  if (roundingInput) {
-    roundingInput.addEventListener('input', updateTotals);
-    roundingInput.addEventListener('change', updateTotals);
-  }
-}
-
-// Save Estimate
-async function saveEstimate() {
-  const estimateNumber = document.getElementById('estimate-number').value;
-  const estimateDate = document.getElementById('estimate-date').value;
-  const billToName = document.getElementById('bill-to-name').value;
-  const billToAddress = document.getElementById('bill-to-address').value;
-
-  if (!billToName) {
-    alert('Please enter Bill To name');
-    return;
-  }
-
-  if (currentEstimateItems.length === 0 || currentEstimateItems.every(i => i.quantity === 0)) {
-    alert('Please add at least one item');
-    return;
-  }
-
-  const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
-  // User enters negative to subtract, positive to add
-  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
-  const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal + advancedPayment + rounding;
-
-  const estimateData = {
-    estimate_number: estimateNumber,
-    estimate_date: estimateDate,
-    place_of_supply: '',
-    bill_to_name: billToName,
-    bill_to_address: billToAddress,
-    sub_total: subTotal,
-    advanced_payment: advancedPayment,
-    rounding: rounding,
-    total: total,
-    total_in_words: numberToWords(total),
-    items: currentEstimateItems.filter(i => i.quantity > 0)
-  };
-
-  try {
-    if (editingEstimateId) {
-      // Update existing estimate
-      estimateData.id = editingEstimateId;
-      await ipcRenderer.invoke('update-estimate', estimateData);
-      alert('Estimate updated successfully!');
-    } else {
-      // Create new estimate
-      await ipcRenderer.invoke('save-estimate', estimateData);
-      // Increment estimate number only for new estimates
-      await ipcRenderer.invoke('increment-estimate-number');
-      alert('Estimate saved successfully!');
-    }
-    editingEstimateId = null; // Reset editing state
-    initializeNewEstimate();
-  } catch (error) {
-    alert('Error saving estimate: ' + error.message);
-  }
-}
-
-// Save and Print
-async function saveAndPrint() {
-  // Prevent duplicate clicks
-  if (isSavingAndPrinting) {
-    return;
-  }
-
-  const saveBtn = document.getElementById('save-and-print-btn');
-
-  // Validate first before disabling button
-  const billToName = document.getElementById('bill-to-name').value;
-  if (!billToName) {
-    alert('Please enter Bill To name');
-    return;
-  }
-
-  if (currentEstimateItems.length === 0 || currentEstimateItems.every(i => i.quantity === 0)) {
-    alert('Please add at least one item');
-    return;
-  }
-
-  // Set flag and disable button immediately
-  isSavingAndPrinting = true;
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving...';
-  }
-
-  const estimateNumber = document.getElementById('estimate-number').value;
-  const estimateDate = document.getElementById('estimate-date').value;
-  const billToAddress = document.getElementById('bill-to-address').value;
-
-  const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
-  // User enters negative to subtract, positive to add
-  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
-  const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal + advancedPayment + rounding;
-
-  const estimateData = {
-    estimate_number: estimateNumber,
-    estimate_date: estimateDate,
-    place_of_supply: '',
-    bill_to_name: billToName,
-    bill_to_address: billToAddress,
-    sub_total: subTotal,
-    advanced_payment: advancedPayment,
-    rounding: rounding,
-    total: total,
-    total_in_words: numberToWords(total),
-    items: currentEstimateItems.filter(i => i.quantity > 0)
-  };
-
-  try {
-    // Save and print in parallel for speed
-    const savePromise = ipcRenderer.invoke('save-estimate', estimateData);
-    const printPromise = printEstimate();
-
-    await savePromise;
-    await ipcRenderer.invoke('increment-estimate-number');
-    await printPromise;
-
-    initializeNewEstimate();
-  } catch (error) {
-    alert('Error: ' + error.message);
-  } finally {
-    // Re-enable button
-    isSavingAndPrinting = false;
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '💾 Save & Print';
-    }
-  }
-}
-
-// Print Estimate
-async function printEstimate() {
-  const printers = await ipcRenderer.invoke('get-printers');
-
-  if (printers.length === 0) {
-    alert('No printers found');
-    return;
-  }
-
-  // Find Zebra printer or use default
-  let selectedPrinter = printers.find(p => p.name.toLowerCase().includes('zebra'));
-  if (!selectedPrinter) {
-    selectedPrinter = printers[0];
-  }
-
-  const htmlContent = generatePrintHTML();
-
-  try {
-    await ipcRenderer.invoke('print-estimate', htmlContent, selectedPrinter.name);
-    alert('Sent to printer successfully!');
-  } catch (error) {
-    alert('Print error: ' + error);
-  }
-}
-
-// Format address for print - each component on separate line
-function formatAddressForPrint(addressString) {
-  if (!addressString) return '';
-
-  // Split by comma or newline
-  const parts = addressString.split(/[,\n]+/).map(p => p.trim()).filter(p => p);
-
-  // Try to identify and organize parts
-  const formattedParts = [];
-  let street = '';
-  let city = '';
-  let pincode = '';
-  let state = '';
-  let country = '';
-
-  parts.forEach(part => {
-    // Check if it's a pincode (6 digits)
-    if (/^\d{6}$/.test(part)) {
-      pincode = part;
-    }
-    // Check if it contains pincode
-    else if (/\d{6}/.test(part)) {
-      const match = part.match(/(\d{6})/);
-      if (match) {
-        pincode = match[1];
-        // Remove pincode from the part
-        const remaining = part.replace(/\d{6}/, '').trim().replace(/^[,\s]+|[,\s]+$/g, '');
-        if (remaining) {
-          if (!city) city = remaining;
-          else street += (street ? ', ' : '') + remaining;
-        }
-      }
-    }
-    // Known states
-    else if (/tamil\s*nadu|karnataka|kerala|andhra|telangana|maharashtra|gujarat/i.test(part)) {
-      state = part;
-    }
-    // Known countries
-    else if (/india|usa|uk|united/i.test(part)) {
-      country = part;
-    }
-    // Likely city if short and no street yet assigned
-    else if (part.length < 25 && !city && street) {
-      city = part;
-    }
-    // Otherwise it's street/address
-    else {
-      if (!street) street = part;
-      else if (!city) city = part;
-      else street += ', ' + part;
-    }
-  });
-
-  // Build formatted address - each on new line
-  const lines = [];
-  if (street) lines.push(street);
-  if (city && pincode) lines.push(`${city} - ${pincode}`);
-  else if (city) lines.push(city);
-  else if (pincode) lines.push(pincode);
-  if (state) lines.push(state);
-  if (country) lines.push(country);
-
-  return lines.join('<br>');
-}
-
-function generatePrintHTML() {
-  const estimateNumber = document.getElementById('estimate-number').value;
-  const estimateDate = document.getElementById('estimate-date').value;
-  const billToName = document.getElementById('bill-to-name').value;
-  const billToAddress = document.getElementById('bill-to-address').value;
-  const formattedAddress = formatAddressForPrint(billToAddress);
-  const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
-  // User enters negative to subtract, positive to add
-  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
-  const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal + advancedPayment + rounding;
-  const totalKg = currentEstimateItems.reduce((sum, item) => {
-    if (item.unit === 'kg') return sum + (parseFloat(item.quantity) || 0);
-    return sum;
-  }, 0);
-
-  // Helper to format number (no currency symbol)
-  const formatNumber = (num) => {
-    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  // Helper to format total with Rupee symbol
-  const formatTotal = (num) => {
-    return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  const itemsHTML = currentEstimateItems
-    .filter(i => i.quantity > 0)
-    .map((item, index) => {
-      const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
-      return `
-      <tr>
-        <td class="center">${index + 1}</td>
-        <td class="left">
-          <strong>${item.item_name}</strong><br>
-          <span class="desc">${(item.description || '') + hsnDisplay}</span>
-        </td>
-        <td class="center">${item.quantity}</td>
-        <td class="center">${item.unit}</td>
-        <td class="right">${formatNumber(item.rate)}</td>
-        <td class="right"><strong>${formatNumber(item.amount)}</strong></td>
-      </tr>
-    `;
-    }).join('');
-
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <style>
-        @page { size: A4; margin: 10mm; }
-        * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; font-size: 11px; margin: 0; padding: 0; }
-
-        /* Page Border Container - no padding to eliminate side spaces */
-        .page-container { border: 1px solid #333; padding: 0; min-height: calc(297mm - 20mm); }
-
-        /* Header */
-        .document-header { text-align: center; margin: 0; padding: 15px; padding-bottom: 10px; border-bottom: 1px solid #333; }
-        .document-header h1 { margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px; }
-
-        /* Info Table - 50/50 split to align with items table and footer */
-        .info-table { width: 100%; margin-bottom: 0; border-collapse: collapse; }
-        .info-table td { padding: 8px 15px; vertical-align: top; border: 1px solid #333; border-top: none; }
-        .info-table .label { font-weight: bold; width: 120px; background: #f5f5f5; }
-        .info-table .value { }
-        .info-left { width: 50%; }
-        .info-right { width: 50%; }
-
-        /* Items Table */
-        .items-table { width: 100%; border-collapse: collapse; margin-top: -1px; }
-        .items-table th {
-          background: #e8e8e8;
-          padding: 10px 8px;
-          border: 1px solid #333;
-          font-weight: bold;
-          font-size: 11px;
-        }
-        .items-table th.center { text-align: center; }
-        .items-table th.left { text-align: left; }
-        .items-table th.right { text-align: right; }
-        .items-table td {
-          padding: 8px;
-          border: 1px solid #333;
-          font-size: 10px;
-          vertical-align: top;
-        }
-        .items-table td.center { text-align: center; }
-        .items-table td.left { text-align: left; }
-        .items-table td.right { text-align: right; }
-        .items-table .desc { font-size: 9px; color: #555; font-style: italic; }
-        .items-table .rate-note { font-size: 8px; color: #666; font-weight: normal; }
-
-        /* Footer Section - Full width table layout (50/50 split to align with Unit column) */
-        .footer-table { width: 100%; border-collapse: collapse; margin-top: -1px; }
-        .footer-table td { border: 1px solid #333; vertical-align: top; }
-        .footer-left-cell { width: 50%; padding: 10px; }
-        .footer-right-cell { width: 50%; padding: 0; }
-
-        /* Totals Table */
-        .totals-table { width: 100%; border-collapse: collapse; }
-        .totals-table td { padding: 6px 10px; border: none; border-bottom: 1px solid #ddd; font-size: 11px; }
-        .totals-table tr:last-child td { border-bottom: none; }
-        .totals-table .label { text-align: left; background: #f9f9f9; }
-        .totals-table .value { text-align: right; font-weight: bold; width: 120px; }
-        .totals-table .grand td { background: #e8e8e8; font-size: 13px; font-weight: bold; border-top: 1px solid #333; }
-
-        /* Other elements */
-        .items-summary { font-size: 11px; margin-bottom: 8px; }
-        .words-section { font-size: 10px; font-style: italic; color: #333; margin: 0; padding: 8px; background: #f9f9f9; }
-        .signature-box { border-top: 1px solid #333; padding: 10px; text-align: center; }
-        .signature-space { height: 40px; }
-        .signature-label { font-size: 10px; border-top: 1px solid #333; padding-top: 5px; }
-
-      </style>
-    </head>
-    <body>
-      <div class="page-container">
-      <div class="document-header">
-        <h1>ESTIMATE</h1>
-      </div>
-
-      <table class="info-table">
-        <tr>
-          <td class="info-left" colspan="2">
-            <table style="width: 100%; border: none;">
-              <tr><td style="border: none; padding: 2px;"><strong>Estimate No:</strong></td><td style="border: none; padding: 2px;">${estimateNumber}</td></tr>
-              <tr><td style="border: none; padding: 2px;"><strong>Estimate Date:</strong></td><td style="border: none; padding: 2px;">${new Date(estimateDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}</td></tr>
-            </table>
-          </td>
-          <td class="info-right" colspan="2" style="padding: 0;">
-            <div style="background: #f5f5f5; padding: 6px 10px; border-bottom: 1px solid #333; font-weight: bold;">Recipient / Bill To</div>
-            <div style="padding: 8px 10px;">
-              <strong>${billToName}</strong><br>
-              ${formattedAddress}
-            </div>
-          </td>
-        </tr>
-      </table>
-
-      <table class="items-table">
-        <thead>
-          <tr>
-            <th class="center" style="width: 5%;">#</th>
-            <th class="left" style="width: 35%;">Item & Description</th>
-            <th class="center" style="width: 10%;">Qty</th>
-            <th class="center" style="width: 8%;">Unit</th>
-            <th class="right" style="width: 18%;">Net Rate<br><span class="rate-note">(Incl. GST)</span></th>
-            <th class="right" style="width: 24%;">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${itemsHTML}
-        </tbody>
-      </table>
-
-      <table class="footer-table">
-        <tr>
-          <td class="footer-left-cell">
-            <div class="items-summary"><strong>Total Quantity:</strong> ${totalKg.toFixed(2)} kg</div>
-            <div class="words-section"><strong>Amount in Words:</strong> ${numberToWords(total)}</div>
-          </td>
-          <td class="footer-right-cell">
-            <table class="totals-table">
-              <tr>
-                <td class="label">Sub Total <span style="font-size: 9px; color: #666;">(Tax Inclusive)</span></td>
-                <td class="value">${formatNumber(subTotal)}</td>
-              </tr>
-              <tr>
-                <td class="label">Advance / Prev Balance</td>
-                <td class="value">${advancedPayment > 0 ? '- ' : ''}${formatNumber(advancedPayment)}</td>
-              </tr>
-              <tr>
-                <td class="label">Rounding</td>
-                <td class="value">${formatNumber(rounding)}</td>
-              </tr>
-              <tr class="grand">
-                <td class="label">TOTAL</td>
-                <td class="value">${formatTotal(total)}</td>
-              </tr>
-            </table>
-            <div class="signature-box">
-              <div class="signature-space"></div>
-              <div class="signature-label">Authorized Signature</div>
-            </div>
-          </td>
-        </tr>
-      </table>
-      </div>
-    </body>
-    </html>
-  `;
-}
-
-// Download PDF
-async function downloadPDF() {
-  const billToName = document.getElementById('bill-to-name').value;
-
-  if (!billToName) {
-    alert('Please enter Bill To name first');
-    return;
-  }
-
-  if (currentEstimateItems.length === 0 || currentEstimateItems.every(i => i.quantity === 0)) {
-    alert('Please add at least one item with quantity');
-    return;
-  }
-
-  try {
-    const doc = generatePDFDocument();
-    const estimateNumber = document.getElementById('estimate-number').value;
-    const pdfData = doc.output('datauristring').split(',')[1];
-    const defaultName = `Estimate_${estimateNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
-
-    const result = await ipcRenderer.invoke('save-pdf', pdfData, defaultName);
-
-    if (result.success) {
-      alert(`PDF saved successfully to:\n${result.path}`);
-    } else if (result.cancelled) {
-      // User cancelled, do nothing
-    } else {
-      alert('Failed to save PDF. Please try again.');
-    }
-  } catch (error) {
-    console.error('PDF Error:', error);
-    alert('Error generating PDF: ' + error.message);
-  }
-}
-
-// Load Estimates
-async function loadEstimates() {
-  const estimates = await ipcRenderer.invoke('get-estimates');
-  const tbody = document.getElementById('estimates-tbody');
-
-  if (estimates.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><h3>No estimates yet</h3><p>Create your first estimate</p></td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = estimates.map(est => `
-    <tr>
-      <td>${est.estimate_number}</td>
-      <td>${new Date(est.estimate_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}</td>
-      <td>${est.bill_to_name}</td>
-      <td>₹${parseFloat(est.total).toFixed(2)}</td>
-      <td>
-        <button class="btn btn-edit btn-small" onclick="viewEstimate(${est.id})">View</button>
-      </td>
-    </tr>
-  `).join('');
-}
-
-async function viewEstimate(id) {
-  const estimate = await ipcRenderer.invoke('get-estimate', id);
-  // For now, just show an alert. You can implement a view modal if needed
-  alert(`Estimate: ${estimate.estimate_number}\nTotal: ₹${estimate.total}`);
-}
-
-// Utility: Number to Words
-function numberToWords(num) {
-  // Handle negative numbers
+// ============ NUMBER TO WORDS ============
+function numToWords(num) {
   if (num < 0) num = Math.abs(num);
-
-  // Round to whole number to avoid decimal issues
   num = Math.round(num);
-
   if (num === 0) return 'Zero Rupees Only';
 
-  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
-  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-  const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  var ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  var tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  var teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
 
-  function convertLessThanThousand(n) {
-    n = Math.floor(n);
+  function conv(n) {
     if (n === 0) return '';
-
-    let result = '';
-
-    if (n >= 100) {
-      result += ones[Math.floor(n / 100)] + ' Hundred ';
-      n %= 100;
-    }
-
-    if (n >= 20) {
-      result += tens[Math.floor(n / 10)] + ' ';
-      n %= 10;
-    } else if (n >= 10) {
-      result += teens[n - 10] + ' ';
-      return result;
-    }
-
-    if (n > 0) {
-      result += ones[n] + ' ';
-    }
-
-    return result;
+    var r = '';
+    if (n >= 100) { r += ones[Math.floor(n / 100)] + ' Hundred '; n %= 100; }
+    if (n >= 20) { r += tens[Math.floor(n / 10)] + ' '; n %= 10; }
+    else if (n >= 10) { r += teens[n - 10] + ' '; return r; }
+    if (n > 0) r += ones[n] + ' ';
+    return r;
   }
 
-  const crores = Math.floor(num / 10000000);
-  num %= 10000000;
+  var cr = Math.floor(num / 10000000); num %= 10000000;
+  var lk = Math.floor(num / 100000); num %= 100000;
+  var th = Math.floor(num / 1000); num %= 1000;
 
-  const lakhs = Math.floor(num / 100000);
-  num %= 100000;
+  var r = '';
+  if (cr > 0) r += conv(cr) + 'Crore ';
+  if (lk > 0) r += conv(lk) + 'Lakh ';
+  if (th > 0) r += conv(th) + 'Thousand ';
+  if (num > 0) r += conv(num);
 
-  const thousands = Math.floor(num / 1000);
-  num %= 1000;
-
-  let result = '';
-
-  if (crores > 0) {
-    result += convertLessThanThousand(crores) + 'Crore ';
-  }
-
-  if (lakhs > 0) {
-    result += convertLessThanThousand(lakhs) + 'Lakh ';
-  }
-
-  if (thousands > 0) {
-    result += convertLessThanThousand(thousands) + 'Thousand ';
-  }
-
-  if (num > 0) {
-    result += convertLessThanThousand(Math.floor(num));
-  }
-
-  return result.trim() + ' Rupees Only';
+  return r.trim() + ' Rupees Only';
 }
 
-// Print Preview
-function showPrintPreview() {
-  const htmlContent = generatePrintHTML();
-  const modal = document.getElementById('print-preview-modal');
-  const iframe = document.getElementById('preview-frame');
+// ============ PRINT HTML ============
+function genPrintHTML() {
+  var num = document.getElementById('estimate-number').value;
+  var date = document.getElementById('estimate-date').value;
+  var name = document.getElementById('bill-to-name').value;
+  var addr = document.getElementById('bill-to-address').value;
 
-  iframe.srcdoc = htmlContent;
-  modal.classList.add('active');
-}
+  var valid = estimateItems.filter(function(x) { return x.quantity > 0; });
+  var sub = 0, kg = 0;
+  valid.forEach(function(x) { sub += x.amount; if (x.unit === 'kg') kg += x.quantity; });
 
-async function printFromPreview() {
-  const printers = await ipcRenderer.invoke('get-printers');
+  var advEl = document.getElementById('advanced-payment');
+  var prevBalEl = document.getElementById('previous-balance');
+  var rndEl = document.getElementById('rounding');
+  var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
+  var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
+  var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
+  // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
+  var total = sub + prevBal + adv + rnd;
 
-  if (printers.length === 0) {
-    alert('No printers found');
-    return;
-  }
+  function fmt(n) { return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-  let selectedPrinter = printers.find(p => p.name.toLowerCase().includes('zebra'));
-  if (!selectedPrinter) {
-    selectedPrinter = printers[0];
-  }
-
-  const iframe = document.getElementById('preview-frame');
-  const htmlContent = iframe.srcdoc;
-
-  try {
-    await ipcRenderer.invoke('print-estimate', htmlContent, selectedPrinter.name);
-    alert('Sent to printer successfully!');
-    document.getElementById('print-preview-modal').classList.remove('active');
-  } catch (error) {
-    alert('Print error: ' + error);
-  }
-}
-
-// Email PDF
-function showEmailModal() {
-  const billToName = document.getElementById('bill-to-name').value;
-
-  if (!billToName) {
-    alert('Please enter Bill To name first');
-    return;
-  }
-
-  const modal = document.getElementById('email-modal');
-  const estimateNumber = document.getElementById('estimate-number').value;
-  const emailInput = document.getElementById('email-to');
-
-  // Clear and prepare email input
-  emailInput.value = '';
-  emailInput.removeAttribute('readonly');
-  emailInput.removeAttribute('disabled');
-
-  document.getElementById('email-subject').value = `Estimate ${estimateNumber} - ${billToName}`;
-  document.getElementById('email-message').value = `Dear ${billToName},\n\nPlease find attached estimate ${estimateNumber} for your review.\n\nThank you for your business.`;
-
-  modal.classList.add('active');
-
-  // Focus on email input after modal is visible
-  setTimeout(() => emailInput.focus(), 100);
-}
-
-async function sendEmail() {
-  const toEmail = document.getElementById('email-to').value;
-  const subject = document.getElementById('email-subject').value;
-  const message = document.getElementById('email-message').value;
-
-  if (!toEmail) {
-    alert('Please enter recipient email address');
-    return;
-  }
-
-  // Generate PDF
-  const doc = generatePDFDocument();
-  const pdfData = doc.output('datauristring').split(',')[1];
-
-  const estimateNumber = document.getElementById('estimate-number').value;
-  const fileName = `Estimate_${estimateNumber}.pdf`;
-
-  try {
-    await ipcRenderer.invoke('send-email', {
-      to: toEmail,
-      subject: subject,
-      message: message,
-      pdfData: pdfData,
-      fileName: fileName
-    });
-
-    alert('Email sent successfully!');
-    document.getElementById('email-modal').classList.remove('active');
-  } catch (error) {
-    alert('Email error: ' + error.message);
-  }
-}
-
-// Helper to generate PDF document object
-// Format address for PDF (returns array of lines)
-function formatAddressForPDF(addressString) {
-  if (!addressString) return [];
-
-  const parts = addressString.split(/[,\n]+/).map(p => p.trim()).filter(p => p);
-
-  let street = '', city = '', pincode = '', state = '', country = '';
-
-  const knownStates = ['Tamil Nadu', 'Tamilnadu', 'Karnataka', 'Kerala', 'Andhra Pradesh', 'Telangana', 'Maharashtra', 'Gujarat', 'Rajasthan', 'Delhi', 'Punjab', 'Haryana', 'Uttar Pradesh', 'Madhya Pradesh', 'West Bengal', 'Bihar', 'Odisha', 'Assam', 'Jharkhand', 'Chhattisgarh', 'Goa'];
-  const knownCountries = ['India', 'INDIA', 'USA', 'UK', 'UAE', 'Singapore', 'Australia'];
-
-  parts.forEach(part => {
-    if (/^\d{6}$/.test(part)) {
-      pincode = part;
-    }
-    else if (knownStates.some(s => part.toLowerCase() === s.toLowerCase())) {
-      state = part;
-    }
-    else if (knownCountries.some(c => part.toLowerCase() === c.toLowerCase())) {
-      country = part;
-    }
-    else if (part.length < 25 && !city && street) {
-      city = part;
-    }
-    else {
-      if (!street) street = part;
-      else if (!city) city = part;
-      else street += ', ' + part;
-    }
+  var rows = '';
+  valid.forEach(function(x, i) {
+    var hsn = x.hsn_code ? ' | HSN: ' + x.hsn_code : '';
+    rows += '<tr><td style="text-align:center;border:1px solid #333;padding:8px">' + (i + 1) + '</td>';
+    rows += '<td style="border:1px solid #333;padding:8px"><strong>' + esc(x.item_name) + '</strong><br><span style="font-size:9px;color:#555">' + esc(x.description) + hsn + '</span></td>';
+    rows += '<td style="text-align:center;border:1px solid #333;padding:8px">' + x.quantity + '</td>';
+    rows += '<td style="text-align:center;border:1px solid #333;padding:8px">' + x.unit + '</td>';
+    rows += '<td style="text-align:right;border:1px solid #333;padding:8px">' + fmt(x.rate) + '</td>';
+    rows += '<td style="text-align:right;border:1px solid #333;padding:8px;font-weight:bold">' + fmt(x.amount) + '</td></tr>';
   });
 
-  const lines = [];
-  if (street) lines.push(street);
-  if (city && pincode) lines.push(`${city} - ${pincode}`);
-  else if (city) lines.push(city);
-  else if (pincode) lines.push(pincode);
-  if (state) lines.push(state);
-  if (country) lines.push(country);
+  var fmtDate = new Date(date).toLocaleDateString('en-GB');
 
-  return lines;
+  // Display advance: negative means deducted, show as positive with context
+  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
+  var prevBalRow = prevBal !== 0 ? '<tr><td style="border:1px solid #333;padding:6px 10px">Previous Balance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(prevBal) + '</td></tr>' : '';
+  var rowspanVal = prevBal !== 0 ? '6' : '5';
+
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}h1{text-align:center;margin:15px 0 10px;font-size:24px}</style></head><body><div class="c"><h1>ESTIMATE</h1><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + num + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(name) + '<br>' + esc(addr).replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr>' + prevBalRow + '<tr><td style="border:1px solid #333;padding:6px 10px">Advance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + advDisplayVal + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Rounding</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(rnd) + '</td></tr><tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
 }
 
-function generatePDFDocument() {
-  const doc = new jsPDF();
-
-  // Helper to format number (no currency symbol)
-  const fmtNumber = (num) => {
-    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  // Helper to format total with Rupee symbol
-  const fmtTotal = (num) => {
-    return 'Rs. ' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
+// ============ PDF ============
+// Generate PDF from estimate data directly (for dashboard PDF download)
+function genPDFFromEstimate(estimate) {
+  var doc = new jsPDF();
+  function fmt(n) { return parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   // Page border
-  doc.setDrawColor(51, 51, 51);
+  doc.setDrawColor(51);
   doc.setLineWidth(0.3);
   doc.rect(10, 10, 190, 277);
 
@@ -1640,177 +971,435 @@ function generatePDFDocument() {
   doc.setFontSize(20);
   doc.setFont(undefined, 'bold');
   doc.text('ESTIMATE', 105, 22, { align: 'center' });
-
-  // Line under title
-  doc.setLineWidth(0.3);
   doc.line(10, 26, 200, 26);
 
-  // Get form data
-  const estimateNumber = document.getElementById('estimate-number').value;
-  const estimateDate = document.getElementById('estimate-date').value;
-  const billToName = document.getElementById('bill-to-name').value;
-  const billToAddress = document.getElementById('bill-to-address').value;
+  var num = estimate.estimate_number;
+  var date = estimate.estimate_date;
+  var name = estimate.bill_to_name;
+  var addr = estimate.bill_to_address || '';
 
-  // Left side - Estimate info
+  // Header row height
+  var headerH = 35;
+
+  // Left header - Estimate No & Date with box
+  doc.setDrawColor(51);
+  doc.rect(10, 26, 95, headerH);
   doc.setFontSize(10);
   doc.setFont(undefined, 'bold');
-  doc.text('Estimate No:', 14, 35);
+  doc.text('Estimate No:', 14, 40);
   doc.setFont(undefined, 'normal');
-  doc.text(estimateNumber, 50, 35);
-
+  doc.text(num, 48, 40);
   doc.setFont(undefined, 'bold');
-  doc.text('Estimate Date:', 14, 43);
+  doc.text('Date:', 14, 52);
   doc.setFont(undefined, 'normal');
-  doc.text(new Date(estimateDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }), 50, 43);
+  doc.text(new Date(date).toLocaleDateString('en-GB'), 48, 52);
 
-  // Right side - Recipient / Bill To header
-  doc.setFillColor(245, 245, 245);
-  doc.rect(105, 28, 95, 8, 'F');
-  doc.setDrawColor(51, 51, 51);
-  doc.rect(105, 28, 95, 8, 'S');
-  doc.setFont(undefined, 'bold');
-  doc.text('Recipient / Bill To', 109, 34);
-
-  // Address box - increased height to fit all lines
-  doc.rect(105, 36, 95, 30, 'S');
+  // Right header - Bill To with box (same height as left)
+  doc.setFillColor(240, 240, 240);
+  doc.rect(105, 26, 95, 8, 'F');
+  doc.rect(105, 26, 95, 8, 'S');
   doc.setFont(undefined, 'bold');
   doc.setFontSize(10);
-  doc.text(billToName, 109, 43);
+  doc.text('Bill To', 152, 32, { align: 'center' });
+  doc.rect(105, 34, 95, headerH - 8, 'S');
+  doc.setFont(undefined, 'bold');
+  doc.text(name, 109, 42);
   doc.setFont(undefined, 'normal');
-  doc.setFontSize(9);
+  doc.setFontSize(8);
+  // Split address properly and display each line
+  var addrText = doc.splitTextToSize(addr, 88);
+  doc.text(addrText, 109, 49);
 
-  const addressLines = formatAddressForPDF(billToAddress);
-  let addrY = 49;
-  addressLines.forEach(line => {
-    doc.text(line, 109, addrY);
-    addrY += 5;
-  });
+  // Get items directly from estimate
+  var items = estimate.items || [];
+  var valid = [];
+  var sub = 0, kg = 0;
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    if (item && item.quantity > 0) {
+      valid.push(item);
+      sub += parseFloat(item.amount) || 0;
+      if (item.unit === 'kg') kg += parseFloat(item.quantity) || 0;
+    }
+  }
 
-  // Items Table
-  const tableData = currentEstimateItems
-    .filter(i => i.quantity > 0)
-    .map((item, index) => {
-      const hsnDisplay = item.hsn_code ? ` | HSN: ${item.hsn_code}` : '';
-      return [
-        index + 1,
-        `${item.item_name}\n${(item.description || '') + hsnDisplay}`,
-        item.quantity,
-        item.unit,
-        fmtNumber(item.rate),
-        fmtNumber(item.amount)
-      ];
-    });
+  var tableData = [];
+  for (var i = 0; i < valid.length; i++) {
+    var x = valid[i];
+    tableData.push([i + 1, x.item_name + '\n' + (x.description || '') + (x.hsn_code ? ' | HSN: ' + x.hsn_code : ''), x.quantity, x.unit, fmt(x.rate), fmt(x.amount)]);
+  }
 
-  // Column widths aligned with footer divider at x=105
-  // Left side (before divider): 10 + 67 + 18 = 95mm
-  // Right side (after divider): 15 + 35 + 45 = 95mm
   doc.autoTable({
-    startY: 68,
-    head: [['#', 'Item & Description', 'Qty', 'Unit', 'Net Rate\n(Incl. GST)', 'Amount']],
+    startY: 26 + headerH + 2,
+    head: [['#', 'Item & Description', 'Qty', 'Unit', 'Rate', 'Amount']],
     body: tableData,
     theme: 'grid',
-    headStyles: { fillColor: [232, 232, 232], textColor: [0, 0, 0], fontSize: 10, fontStyle: 'bold' },
-    styles: { fontSize: 9, lineColor: [51, 51, 51], lineWidth: 0.2 },
-    columnStyles: {
-      0: { cellWidth: 10, halign: 'center' },
-      1: { cellWidth: 67 },
-      2: { cellWidth: 18, halign: 'center' },
-      3: { cellWidth: 15, halign: 'center' },
-      4: { cellWidth: 35, halign: 'right' },
-      5: { cellWidth: 45, halign: 'right', fontStyle: 'bold' }
+    headStyles: {
+      fillColor: [232, 232, 232],
+      textColor: [0, 0, 0],
+      fontSize: 10,
+      fontStyle: 'bold',
+      cellPadding: 4,
+      halign: 'center'
     },
-    margin: { left: 10, right: 10 }
+    styles: {
+      fontSize: 9,
+      lineColor: [51],
+      lineWidth: 0.2,
+      cellPadding: 4,
+      overflow: 'linebreak',
+      valign: 'middle'
+    },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center' },
+      1: { cellWidth: 68, halign: 'left' },
+      2: { cellWidth: 20, halign: 'center' },
+      3: { cellWidth: 18, halign: 'center' },
+      4: { cellWidth: 32, halign: 'right' },
+      5: { cellWidth: 40, halign: 'right', fontStyle: 'bold' }
+    },
+    margin: { left: 10, right: 10, top: 20, bottom: 20 },
+    showHead: 'everyPage',
+    tableWidth: 190,
+    didDrawPage: function(data) {
+      doc.setDrawColor(51);
+      doc.setLineWidth(0.3);
+      doc.rect(10, 10, 190, 277);
+    }
   });
 
-  // Calculate totals
-  const finalY = doc.lastAutoTable.finalY;
-  const subTotal = currentEstimateItems.reduce((sum, item) => sum + item.amount, 0);
-  // User enters negative to subtract, positive to add
-  const advancedPayment = parseFloat(document.getElementById('advanced-payment').value) || 0;
-  const rounding = parseFloat(document.getElementById('rounding').value) || 0;
-  const total = subTotal + advancedPayment + rounding;
-  const totalKg = currentEstimateItems.reduce((sum, item) => {
-    if (item.unit === 'kg') return sum + (parseFloat(item.quantity) || 0);
-    return sum;
-  }, 0);
+  var fY = doc.lastAutoTable.finalY;
+  var adv = parseFloat(estimate.advanced_payment) || 0;
+  var prevBal = parseFloat(estimate.previous_balance) || 0;
+  var rnd = parseFloat(estimate.rounding) || 0;
+  var total = sub + prevBal + adv + rnd;
+  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
 
-  // Footer section - with straight borders (2 columns only)
-  const footerY = finalY;
-  const leftW = 95;
-  const rightW = 95;
+  // Build totals rows for right side table
+  var totalsData = [];
+  totalsData.push(['Sub Total', fmt(sub)]);
+  if (prevBal !== 0) {
+    totalsData.push(['Previous Balance', fmt(prevBal)]);
+  }
+  totalsData.push(['Advance', advDisplayVal]);
+  totalsData.push(['Rounding', fmt(rnd)]);
 
-  // Draw footer manually for perfect alignment
-  doc.setDrawColor(51, 51, 51);
-  doc.setLineWidth(0.2);
+  var rowH = 8;
+  var totalRows = totalsData.length + 1; // +1 for TOTAL row
+  var boxHeight = (totalRows * rowH) + 8;
 
-  // Left column - Total Quantity row
-  doc.rect(10, footerY, leftW, 10);
+  // Left box - Total Qty and In Words
+  doc.setDrawColor(51);
+  doc.rect(10, fY, 95, boxHeight);
   doc.setFont(undefined, 'bold');
   doc.setFontSize(10);
-  doc.text('Total Quantity: ' + totalKg.toFixed(2) + ' kg', 14, footerY + 7);
-
-  // Left column - Amount in Words (spans remaining rows)
-  doc.setFillColor(249, 249, 249);
-  doc.rect(10, footerY + 10, leftW, 50, 'FD');
-  doc.setFont(undefined, 'bold');
+  doc.text('Total Qty: ' + kg.toFixed(2) + ' kg', 14, fY + 10);
   doc.setFontSize(9);
-  doc.text('Amount in Words:', 14, footerY + 18);
+  doc.text('In Words:', 14, fY + 20);
   doc.setFont(undefined, 'normal');
-  const wordsLines = doc.splitTextToSize(numberToWords(total), leftW - 10);
-  doc.text(wordsLines, 14, footerY + 26);
+  var words = doc.splitTextToSize(numToWords(Math.abs(total)), 85);
+  doc.text(words, 14, fY + 28);
 
-  // Right column - Sub Total
-  doc.setFillColor(249, 249, 249);
-  doc.rect(10 + leftW, footerY, rightW, 10, 'FD');
-  doc.setFont(undefined, 'normal');
-  doc.setFontSize(9);
-  doc.text('Sub Total (Tax Inclusive)', 10 + leftW + 4, footerY + 7);
-  doc.setFont(undefined, 'bold');
-  doc.text(fmtNumber(subTotal), 10 + leftW + rightW - 4, footerY + 7, { align: 'right' });
+  // Right section - Totals table with proper grid
+  var rightX = 105;
+  var rightW = 95;
+  var labelW = 55;
+  var valueW = 40;
+  var currentY = fY;
 
-  // Right column - Advance
-  doc.setFillColor(255, 255, 255);
-  doc.rect(10 + leftW, footerY + 10, rightW, 10, 'FD');
-  doc.setFont(undefined, 'normal');
-  doc.text('Advance / Prev Balance', 10 + leftW + 4, footerY + 17);
-  doc.setFont(undefined, 'bold');
-  doc.text((advancedPayment > 0 ? '- ' : '') + fmtNumber(advancedPayment), 10 + leftW + rightW - 4, footerY + 17, { align: 'right' });
+  doc.setDrawColor(51);
 
-  // Right column - Rounding
-  doc.setFillColor(255, 255, 255);
-  doc.rect(10 + leftW, footerY + 20, rightW, 10, 'FD');
-  doc.setFont(undefined, 'normal');
-  doc.text('Rounding', 10 + leftW + 4, footerY + 27);
-  doc.setFont(undefined, 'bold');
-  doc.text(fmtNumber(rounding), 10 + leftW + rightW - 4, footerY + 27, { align: 'right' });
+  // Draw each row with borders
+  for (var r = 0; r < totalsData.length; r++) {
+    // Row border
+    doc.rect(rightX, currentY, rightW, rowH);
+    // Vertical divider
+    doc.line(rightX + labelW, currentY, rightX + labelW, currentY + rowH);
+    // Label
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(9);
+    doc.text(totalsData[r][0], rightX + 4, currentY + 6);
+    // Value (right aligned)
+    doc.text(totalsData[r][1], rightX + rightW - 4, currentY + 6, { align: 'right' });
+    currentY += rowH;
+  }
 
-  // Right column - TOTAL
+  // TOTAL row with background
   doc.setFillColor(232, 232, 232);
-  doc.rect(10 + leftW, footerY + 30, rightW, 10, 'FD');
+  doc.rect(rightX, currentY, rightW, rowH + 2, 'F');
+  doc.rect(rightX, currentY, rightW, rowH + 2, 'S');
+  doc.line(rightX + labelW, currentY, rightX + labelW, currentY + rowH + 2);
   doc.setFont(undefined, 'bold');
-  doc.setFontSize(11);
-  doc.text('TOTAL', 10 + leftW + 4, footerY + 37);
-  doc.text(fmtTotal(total), 10 + leftW + rightW - 4, footerY + 37, { align: 'right' });
+  doc.setFontSize(10);
+  doc.text('TOTAL', rightX + 4, currentY + 7);
+  doc.text('Rs. ' + fmt(total), rightX + rightW - 4, currentY + 7, { align: 'right' });
 
-  // Right column - Signature
-  doc.setFillColor(255, 255, 255);
-  doc.rect(10 + leftW, footerY + 40, rightW, 20, 'FD');
+  // Signature section
+  var sigY = Math.max(fY + boxHeight, currentY + rowH + 2) + 2;
+  doc.setDrawColor(51);
+  doc.rect(10, sigY, 190, 25);
   doc.setFont(undefined, 'normal');
   doc.setFontSize(9);
-  doc.line(10 + leftW + 20, footerY + 52, 10 + leftW + rightW - 20, footerY + 52);
-  doc.text('Authorized Signature', 10 + leftW + (rightW / 2), footerY + 57, { align: 'center' });
+  doc.line(130, sigY + 18, 190, sigY + 18);
+  doc.text('Authorized Signature', 160, sigY + 23, { align: 'center' });
 
   return doc;
 }
 
-// Make functions globally accessible
-window.selectItem = selectItem;
-window.selectCustomer = selectCustomer;
-window.updateItemQuantity = updateItemQuantity;
-window.updateItemUnit = updateItemUnit;
-window.updateItemRate = updateItemRate;
-window.removeItemRow = removeItemRow;
-window.editItem = editItem;
-window.deleteItem = deleteItem;
-window.viewEstimate = viewEstimate;
-window.updateTotals = updateTotals;
+// Generate PDF from current form (for new estimate view)
+function genPDFDoc() {
+  var doc = new jsPDF();
+  function fmt(n) { return parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  doc.setDrawColor(51); doc.setLineWidth(0.3); doc.rect(10, 10, 190, 277);
+  doc.setFontSize(20); doc.setFont(undefined, 'bold'); doc.text('ESTIMATE', 105, 22, { align: 'center' });
+  doc.line(10, 26, 200, 26);
+
+  var num = document.getElementById('estimate-number').value;
+  var date = document.getElementById('estimate-date').value;
+  var name = document.getElementById('bill-to-name').value;
+  var addr = document.getElementById('bill-to-address').value;
+
+  doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.text('Estimate No:', 14, 35);
+  doc.setFont(undefined, 'normal'); doc.text(num, 50, 35);
+  doc.setFont(undefined, 'bold'); doc.text('Date:', 14, 43);
+  doc.setFont(undefined, 'normal'); doc.text(new Date(date).toLocaleDateString('en-GB'), 50, 43);
+
+  doc.setFillColor(245); doc.rect(105, 28, 95, 8, 'F'); doc.rect(105, 28, 95, 8, 'S');
+  doc.setFont(undefined, 'bold'); doc.text('Bill To', 109, 34);
+  doc.rect(105, 36, 95, 25, 'S'); doc.text(name, 109, 43);
+  doc.setFont(undefined, 'normal'); doc.setFontSize(9);
+  var lines = addr.split(','); var y = 49;
+  for (var i = 0; i < lines.length && i < 4; i++) { doc.text(lines[i].trim(), 109, y); y += 5; }
+
+  var valid = [];
+  var sub = 0, kg = 0;
+  for (var i = 0; i < estimateItems.length; i++) {
+    var item = estimateItems[i];
+    if (item && item.quantity > 0) {
+      valid.push(item);
+      sub += parseFloat(item.amount) || 0;
+      if (item.unit === 'kg') kg += parseFloat(item.quantity) || 0;
+    }
+  }
+
+  var tableData = [];
+  for (var i = 0; i < valid.length; i++) {
+    var x = valid[i];
+    tableData.push([i + 1, x.item_name + '\n' + (x.description || '') + (x.hsn_code ? ' | HSN: ' + x.hsn_code : ''), x.quantity, x.unit, fmt(x.rate), fmt(x.amount)]);
+  }
+
+  doc.autoTable({
+    startY: 65,
+    head: [['#', 'Item & Description', 'Qty', 'Unit', 'Rate', 'Amount']],
+    body: tableData,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [232, 232, 232],
+      textColor: [0, 0, 0],
+      fontSize: 10,
+      fontStyle: 'bold',
+      cellPadding: 4,
+      halign: 'center'
+    },
+    styles: {
+      fontSize: 9,
+      lineColor: [51],
+      lineWidth: 0.2,
+      cellPadding: 4,
+      overflow: 'linebreak',
+      valign: 'middle'
+    },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center' },
+      1: { cellWidth: 68, halign: 'left' },
+      2: { cellWidth: 20, halign: 'center' },
+      3: { cellWidth: 18, halign: 'center' },
+      4: { cellWidth: 32, halign: 'right' },
+      5: { cellWidth: 40, halign: 'right', fontStyle: 'bold' }
+    },
+    margin: { left: 10, right: 10, top: 20, bottom: 20 },
+    showHead: 'everyPage',
+    tableWidth: 190,
+    didDrawPage: function(data) {
+      doc.setDrawColor(51);
+      doc.setLineWidth(0.3);
+      doc.rect(10, 10, 190, 277);
+    }
+  });
+
+  var fY = doc.lastAutoTable.finalY;
+  var advEl = document.getElementById('advanced-payment');
+  var prevBalEl = document.getElementById('previous-balance');
+  var rndEl = document.getElementById('rounding');
+  var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
+  var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
+  var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
+  var total = sub + prevBal + adv + rnd;
+  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
+
+  // Calculate number of rows in right section
+  var rightRows = 3; // Sub Total, Advance, Rounding always shown
+  if (prevBal !== 0) rightRows++;
+  rightRows++; // TOTAL row
+
+  var rowHeight = 8;
+  var boxHeight = (rightRows * rowHeight) + 12; // padding
+
+  // Left box - Total Qty and In Words
+  doc.rect(10, fY, 95, boxHeight);
+  doc.setFont(undefined, 'bold'); doc.setFontSize(10);
+  doc.text('Total Qty: ' + kg.toFixed(2) + ' kg', 14, fY + 10);
+  doc.text('In Words:', 14, fY + 22);
+  doc.setFont(undefined, 'normal'); doc.setFontSize(9);
+  var words = doc.splitTextToSize(numToWords(Math.abs(total)), 85);
+  doc.text(words, 14, fY + 32);
+
+  // Right box - Totals section
+  doc.rect(105, fY, 95, boxHeight);
+  var lineY = fY + 10;
+
+  // Sub Total row
+  doc.setFontSize(9);
+  doc.setFont(undefined, 'normal');
+  doc.text('Sub Total', 109, lineY);
+  doc.setFont(undefined, 'bold');
+  doc.text(fmt(sub), 196, lineY, { align: 'right' });
+  lineY += rowHeight;
+
+  // Previous Balance row (only if value exists)
+  if (prevBal !== 0) {
+    doc.setFont(undefined, 'normal');
+    doc.text('Previous Balance', 109, lineY);
+    doc.text(fmt(prevBal), 196, lineY, { align: 'right' });
+    lineY += rowHeight;
+  }
+
+  // Advance row
+  doc.setFont(undefined, 'normal');
+  doc.text('Advance', 109, lineY);
+  doc.text(advDisplayVal, 196, lineY, { align: 'right' });
+  lineY += rowHeight;
+
+  // Rounding row
+  doc.text('Rounding', 109, lineY);
+  doc.text(fmt(rnd), 196, lineY, { align: 'right' });
+  lineY += rowHeight;
+
+  // TOTAL row with background
+  doc.setFillColor(232, 232, 232);
+  doc.rect(105, lineY - 4, 95, 12, 'F');
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(11);
+  doc.text('TOTAL', 109, lineY + 4);
+  doc.text('Rs. ' + fmt(total), 196, lineY + 4, { align: 'right' });
+
+  return doc;
+}
+
+// ============ DASHBOARD ============
+window.editEstimate = async function(id) {
+  var e = await ipcRenderer.invoke('get-estimate', id);
+  if (!e) return;
+  editingId = id;
+
+  // Reset glow tracking for edited estimate
+  resetGlowTracking();
+
+  document.querySelectorAll('.nav-btn').forEach(function(b) {
+    b.classList.remove('active');
+    if (b.dataset.view === 'new-estimate') b.classList.add('active');
+  });
+  document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+  document.getElementById('new-estimate-view').classList.add('active');
+
+  document.getElementById('estimate-number').value = e.estimate_number;
+  document.getElementById('estimate-date').value = e.estimate_date;
+  document.getElementById('bill-to-name').value = e.bill_to_name;
+  document.getElementById('bill-to-address').value = e.bill_to_address || '';
+  document.getElementById('advanced-payment').value = e.advanced_payment || '';
+  document.getElementById('previous-balance').value = e.previous_balance || '';
+  document.getElementById('rounding').value = e.rounding || '';
+
+  estimateItems = e.items.map(function(x) {
+    return { item_name: x.item_name, description: x.description || '', hsn_code: x.hsn_code || '', quantity: x.quantity, unit: x.unit, rate: x.rate, amount: x.amount };
+  });
+
+  renderTable();
+};
+
+window.downloadEstimatePDF = async function(id) {
+  try {
+    var e = await ipcRenderer.invoke('get-estimate', id);
+    if (!e) {
+      alert('Estimate not found');
+      return;
+    }
+
+    // Generate PDF directly from estimate data
+    var doc = genPDFFromEstimate(e);
+    var pdfData = doc.output('datauristring').split(',')[1];
+    var r = await ipcRenderer.invoke('save-pdf', pdfData, 'Estimate_' + e.estimate_number + '.pdf');
+    if (r.success) {
+      alert('PDF saved to:\n' + r.path);
+    }
+  } catch (err) {
+    alert('PDF Error: ' + err.message);
+  }
+};
+
+// Generate print HTML directly from estimate data
+function genPrintHTMLFromEstimate(estimate) {
+  function fmt(n) { return parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  var items = estimate.items || [];
+  var sub = 0, kg = 0;
+  var rows = '';
+  for (var i = 0; i < items.length; i++) {
+    var x = items[i];
+    if (x.quantity > 0) {
+      sub += parseFloat(x.amount) || 0;
+      if (x.unit === 'kg') kg += parseFloat(x.quantity) || 0;
+      var hsn = x.hsn_code ? ' | HSN: ' + x.hsn_code : '';
+      rows += '<tr><td style="text-align:center;border:1px solid #333;padding:8px">' + (i + 1) + '</td>';
+      rows += '<td style="border:1px solid #333;padding:8px"><strong>' + esc(x.item_name) + '</strong><br><span style="font-size:9px;color:#555">' + esc(x.description) + hsn + '</span></td>';
+      rows += '<td style="text-align:center;border:1px solid #333;padding:8px">' + x.quantity + '</td>';
+      rows += '<td style="text-align:center;border:1px solid #333;padding:8px">' + x.unit + '</td>';
+      rows += '<td style="text-align:right;border:1px solid #333;padding:8px">' + fmt(x.rate) + '</td>';
+      rows += '<td style="text-align:right;border:1px solid #333;padding:8px;font-weight:bold">' + fmt(x.amount) + '</td></tr>';
+    }
+  }
+
+  var adv = parseFloat(estimate.advanced_payment) || 0;
+  var prevBal = parseFloat(estimate.previous_balance) || 0;
+  var rnd = parseFloat(estimate.rounding) || 0;
+  var total = sub + prevBal + adv + rnd;
+
+  var fmtDate = new Date(estimate.estimate_date).toLocaleDateString('en-GB');
+  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
+  var prevBalRow = prevBal !== 0 ? '<tr><td style="border:1px solid #333;padding:6px 10px">Previous Balance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(prevBal) + '</td></tr>' : '';
+  var rowspanVal = prevBal !== 0 ? '6' : '5';
+
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}h1{text-align:center;margin:15px 0 10px;font-size:24px}</style></head><body><div class="c"><h1>ESTIMATE</h1><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + estimate.estimate_number + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(estimate.bill_to_name) + '<br>' + esc(estimate.bill_to_address || '').replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr>' + prevBalRow + '<tr><td style="border:1px solid #333;padding:6px 10px">Advance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + advDisplayVal + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Rounding</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(rnd) + '</td></tr><tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
+}
+
+window.printEstimateFromDashboard = async function(id) {
+  var e = await ipcRenderer.invoke('get-estimate', id);
+  if (!e) return;
+
+  // Generate print HTML directly from estimate data and print
+  var html = genPrintHTMLFromEstimate(e);
+  var win = window.open('', 'Print', 'width=800,height=600');
+  win.document.write(html);
+  win.document.close();
+  win.onload = function() { win.print(); };
+};
+
+// Exports
+Object.defineProperty(window, 'estimateItems', { get: function() { return estimateItems; }, set: function(v) { estimateItems = v; } });
+window.generatePrintHTML = genPrintHTML;
+window.genPrintHTMLFromEstimate = genPrintHTMLFromEstimate;
+window.genPDFFromEstimate = genPDFFromEstimate;
+window.renderTable = renderTable;
+window.calcTotals = calcTotals;
+window.resetForm = resetForm;
