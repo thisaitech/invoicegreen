@@ -413,9 +413,9 @@ function calcTotals() {
   var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
   var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
   var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
-  // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
-  // Previous Balance adds to Sub Total, Advance (negative) subtracts
-  var total = sub + prevBal + adv + rnd;
+  // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
+  // Advance is subtracted, Previous Balance is added
+  var total = sub - adv + prevBal + rnd;
 
   var el;
   el = document.getElementById('sub-total'); if (el) el.textContent = '₹' + sub.toFixed(2);
@@ -432,8 +432,8 @@ function autoRound() {
   var rndEl = document.getElementById('rounding');
   var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
   var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
-  // Round to nearest whole number (Sub Total + Previous Balance + Advance)
-  var beforeRound = sub + prevBal + adv;
+  // Round to nearest whole number (Sub Total - Advance + Previous Balance)
+  var beforeRound = sub - adv + prevBal;
   if (rndEl) rndEl.value = (Math.round(beforeRound) - beforeRound).toFixed(2);
   calcTotals();
 }
@@ -555,8 +555,8 @@ async function saveEstimate() {
   var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
   var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
 
-  // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
-  var total = sub + prevBal + adv + rnd;
+  // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
+  var total = sub - adv + prevBal + rnd;
   var data = {
     estimate_number: document.getElementById('estimate-number').value,
     estimate_date: document.getElementById('estimate-date').value,
@@ -608,8 +608,8 @@ async function saveAndPrint() {
     var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
     var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
 
-    // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
-    var total = sub + prevBal + adv + rnd;
+    // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
+    var total = sub - adv + prevBal + rnd;
     var data = {
       estimate_number: document.getElementById('estimate-number').value,
       estimate_date: document.getElementById('estimate-date').value,
@@ -930,8 +930,8 @@ function genPrintHTML() {
   var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
   var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
   var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
-  // Formula: Grand Total = Sub Total + Previous Balance + Advance + Rounding
-  var total = sub + prevBal + adv + rnd;
+  // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
+  var total = sub - adv + prevBal + rnd;
 
   function fmt(n) { return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
@@ -948,12 +948,10 @@ function genPrintHTML() {
 
   var fmtDate = new Date(date).toLocaleDateString('en-GB');
 
-  // Display advance: negative means deducted, show as positive with context
-  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
-  var prevBalRow = prevBal !== 0 ? '<tr><td style="border:1px solid #333;padding:6px 10px">Previous Balance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(prevBal) + '</td></tr>' : '';
-  var rowspanVal = prevBal !== 0 ? '6' : '5';
+  // Always show Previous Balance row
+  var rowspanVal = '6';
 
-  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}h1{text-align:center;margin:15px 0 10px;font-size:24px}</style></head><body><div class="c"><h1>ESTIMATE</h1><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + num + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(name) + '<br>' + esc(addr).replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr>' + prevBalRow + '<tr><td style="border:1px solid #333;padding:6px 10px">Advance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + advDisplayVal + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Rounding</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(rnd) + '</td></tr><tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}</style></head><body><div class="c"><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + num + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(name) + '<br>' + esc(addr).replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Advance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(adv) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Previous Balance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(prevBal) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Rounding</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(rnd) + '</td></tr><tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
 }
 
 // ============ PDF ============
@@ -967,48 +965,43 @@ function genPDFFromEstimate(estimate) {
   doc.setLineWidth(0.3);
   doc.rect(10, 10, 190, 277);
 
-  // Title
-  doc.setFontSize(20);
-  doc.setFont(undefined, 'bold');
-  doc.text('ESTIMATE', 105, 22, { align: 'center' });
-  doc.line(10, 26, 200, 26);
-
   var num = estimate.estimate_number;
   var date = estimate.estimate_date;
   var name = estimate.bill_to_name;
   var addr = estimate.bill_to_address || '';
 
-  // Header row height
+  // Header row height - start from top
+  var headerY = 10;
   var headerH = 35;
 
   // Left header - Estimate No & Date with box
   doc.setDrawColor(51);
-  doc.rect(10, 26, 95, headerH);
+  doc.rect(10, headerY, 95, headerH);
   doc.setFontSize(10);
   doc.setFont(undefined, 'bold');
-  doc.text('Estimate No:', 14, 40);
+  doc.text('Estimate No:', 14, headerY + 14);
   doc.setFont(undefined, 'normal');
-  doc.text(num, 48, 40);
+  doc.text(num, 48, headerY + 14);
   doc.setFont(undefined, 'bold');
-  doc.text('Date:', 14, 52);
+  doc.text('Date:', 14, headerY + 26);
   doc.setFont(undefined, 'normal');
-  doc.text(new Date(date).toLocaleDateString('en-GB'), 48, 52);
+  doc.text(new Date(date).toLocaleDateString('en-GB'), 48, headerY + 26);
 
   // Right header - Bill To with box (same height as left)
   doc.setFillColor(240, 240, 240);
-  doc.rect(105, 26, 95, 8, 'F');
-  doc.rect(105, 26, 95, 8, 'S');
+  doc.rect(105, headerY, 95, 8, 'F');
+  doc.rect(105, headerY, 95, 8, 'S');
   doc.setFont(undefined, 'bold');
   doc.setFontSize(10);
-  doc.text('Bill To', 152, 32, { align: 'center' });
-  doc.rect(105, 34, 95, headerH - 8, 'S');
+  doc.text('Bill To', 152, headerY + 6, { align: 'center' });
+  doc.rect(105, headerY + 8, 95, headerH - 8, 'S');
   doc.setFont(undefined, 'bold');
-  doc.text(name, 109, 42);
+  doc.text(name, 109, headerY + 16);
   doc.setFont(undefined, 'normal');
   doc.setFontSize(8);
   // Split address properly and display each line
   var addrText = doc.splitTextToSize(addr, 88);
-  doc.text(addrText, 109, 49);
+  doc.text(addrText, 109, headerY + 23);
 
   // Get items directly from estimate
   var items = estimate.items || [];
@@ -1030,7 +1023,7 @@ function genPDFFromEstimate(estimate) {
   }
 
   doc.autoTable({
-    startY: 26 + headerH + 2,
+    startY: headerY + headerH + 2,
     head: [['#', 'Item & Description', 'Qty', 'Unit', 'Rate', 'Amount']],
     body: tableData,
     theme: 'grid',
@@ -1072,16 +1065,14 @@ function genPDFFromEstimate(estimate) {
   var adv = parseFloat(estimate.advanced_payment) || 0;
   var prevBal = parseFloat(estimate.previous_balance) || 0;
   var rnd = parseFloat(estimate.rounding) || 0;
-  var total = sub + prevBal + adv + rnd;
-  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
+  // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
+  var total = sub - adv + prevBal + rnd;
 
-  // Build totals rows for right side table
+  // Build totals rows for right side table - always show all fields
   var totalsData = [];
   totalsData.push(['Sub Total', fmt(sub)]);
-  if (prevBal !== 0) {
-    totalsData.push(['Previous Balance', fmt(prevBal)]);
-  }
-  totalsData.push(['Advance', advDisplayVal]);
+  totalsData.push(['Advance', fmt(adv)]);
+  totalsData.push(['Previous Balance', fmt(prevBal)]);
   totalsData.push(['Rounding', fmt(rnd)]);
 
   var rowH = 8;
@@ -1152,25 +1143,30 @@ function genPDFDoc() {
   function fmt(n) { return parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   doc.setDrawColor(51); doc.setLineWidth(0.3); doc.rect(10, 10, 190, 277);
-  doc.setFontSize(20); doc.setFont(undefined, 'bold'); doc.text('ESTIMATE', 105, 22, { align: 'center' });
-  doc.line(10, 26, 200, 26);
 
   var num = document.getElementById('estimate-number').value;
   var date = document.getElementById('estimate-date').value;
   var name = document.getElementById('bill-to-name').value;
   var addr = document.getElementById('bill-to-address').value;
 
-  doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.text('Estimate No:', 14, 35);
-  doc.setFont(undefined, 'normal'); doc.text(num, 50, 35);
-  doc.setFont(undefined, 'bold'); doc.text('Date:', 14, 43);
-  doc.setFont(undefined, 'normal'); doc.text(new Date(date).toLocaleDateString('en-GB'), 50, 43);
+  // Header row - start from top (no title)
+  var headerY = 10;
+  var headerH = 35;
 
-  doc.setFillColor(245); doc.rect(105, 28, 95, 8, 'F'); doc.rect(105, 28, 95, 8, 'S');
-  doc.setFont(undefined, 'bold'); doc.text('Bill To', 109, 34);
-  doc.rect(105, 36, 95, 25, 'S'); doc.text(name, 109, 43);
-  doc.setFont(undefined, 'normal'); doc.setFontSize(9);
-  var lines = addr.split(','); var y = 49;
-  for (var i = 0; i < lines.length && i < 4; i++) { doc.text(lines[i].trim(), 109, y); y += 5; }
+  // Left header - Estimate No & Date
+  doc.rect(10, headerY, 95, headerH);
+  doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.text('Estimate No:', 14, headerY + 14);
+  doc.setFont(undefined, 'normal'); doc.text(num, 48, headerY + 14);
+  doc.setFont(undefined, 'bold'); doc.text('Date:', 14, headerY + 26);
+  doc.setFont(undefined, 'normal'); doc.text(new Date(date).toLocaleDateString('en-GB'), 48, headerY + 26);
+
+  // Right header - Bill To
+  doc.setFillColor(240, 240, 240); doc.rect(105, headerY, 95, 8, 'F'); doc.rect(105, headerY, 95, 8, 'S');
+  doc.setFont(undefined, 'bold'); doc.text('Bill To', 152, headerY + 6, { align: 'center' });
+  doc.rect(105, headerY + 8, 95, headerH - 8, 'S'); doc.text(name, 109, headerY + 16);
+  doc.setFont(undefined, 'normal'); doc.setFontSize(8);
+  var addrText = doc.splitTextToSize(addr, 88);
+  doc.text(addrText, 109, headerY + 23);
 
   var valid = [];
   var sub = 0, kg = 0;
@@ -1190,7 +1186,7 @@ function genPDFDoc() {
   }
 
   doc.autoTable({
-    startY: 65,
+    startY: headerY + headerH + 2,
     head: [['#', 'Item & Description', 'Qty', 'Unit', 'Rate', 'Amount']],
     body: tableData,
     theme: 'grid',
@@ -1235,16 +1231,13 @@ function genPDFDoc() {
   var adv = advEl ? parseFloat(advEl.value) || 0 : 0;
   var prevBal = prevBalEl ? parseFloat(prevBalEl.value) || 0 : 0;
   var rnd = rndEl ? parseFloat(rndEl.value) || 0 : 0;
-  var total = sub + prevBal + adv + rnd;
-  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
+  // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
+  var total = sub - adv + prevBal + rnd;
 
-  // Calculate number of rows in right section
-  var rightRows = 3; // Sub Total, Advance, Rounding always shown
-  if (prevBal !== 0) rightRows++;
-  rightRows++; // TOTAL row
-
+  // Always show all 4 rows + TOTAL row
+  var rightRows = 5;
   var rowHeight = 8;
-  var boxHeight = (rightRows * rowHeight) + 12; // padding
+  var boxHeight = (rightRows * rowHeight) + 12;
 
   // Left box - Total Qty and In Words
   doc.rect(10, fY, 95, boxHeight);
@@ -1267,18 +1260,15 @@ function genPDFDoc() {
   doc.text(fmt(sub), 196, lineY, { align: 'right' });
   lineY += rowHeight;
 
-  // Previous Balance row (only if value exists)
-  if (prevBal !== 0) {
-    doc.setFont(undefined, 'normal');
-    doc.text('Previous Balance', 109, lineY);
-    doc.text(fmt(prevBal), 196, lineY, { align: 'right' });
-    lineY += rowHeight;
-  }
-
   // Advance row
   doc.setFont(undefined, 'normal');
   doc.text('Advance', 109, lineY);
-  doc.text(advDisplayVal, 196, lineY, { align: 'right' });
+  doc.text(fmt(adv), 196, lineY, { align: 'right' });
+  lineY += rowHeight;
+
+  // Previous Balance row (always show)
+  doc.text('Previous Balance', 109, lineY);
+  doc.text(fmt(prevBal), 196, lineY, { align: 'right' });
   lineY += rowHeight;
 
   // Rounding row
@@ -1373,14 +1363,14 @@ function genPrintHTMLFromEstimate(estimate) {
   var adv = parseFloat(estimate.advanced_payment) || 0;
   var prevBal = parseFloat(estimate.previous_balance) || 0;
   var rnd = parseFloat(estimate.rounding) || 0;
-  var total = sub + prevBal + adv + rnd;
+  // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
+  var total = sub - adv + prevBal + rnd;
 
   var fmtDate = new Date(estimate.estimate_date).toLocaleDateString('en-GB');
-  var advDisplayVal = adv < 0 ? fmt(Math.abs(adv)) : fmt(adv);
-  var prevBalRow = prevBal !== 0 ? '<tr><td style="border:1px solid #333;padding:6px 10px">Previous Balance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(prevBal) + '</td></tr>' : '';
-  var rowspanVal = prevBal !== 0 ? '6' : '5';
+  // Always show all rows including Previous Balance
+  var rowspanVal = '6';
 
-  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}h1{text-align:center;margin:15px 0 10px;font-size:24px}</style></head><body><div class="c"><h1>ESTIMATE</h1><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + estimate.estimate_number + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(estimate.bill_to_name) + '<br>' + esc(estimate.bill_to_address || '').replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr>' + prevBalRow + '<tr><td style="border:1px solid #333;padding:6px 10px">Advance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + advDisplayVal + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Rounding</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(rnd) + '</td></tr><tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}</style></head><body><div class="c"><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + estimate.estimate_number + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(estimate.bill_to_name) + '<br>' + esc(estimate.bill_to_address || '').replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Advance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(adv) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Previous Balance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(prevBal) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Rounding</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(rnd) + '</td></tr><tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
 }
 
 window.printEstimateFromDashboard = async function(id) {

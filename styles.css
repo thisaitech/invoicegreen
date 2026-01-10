@@ -4,6 +4,86 @@
   box-sizing: border-box;
 }
 
+/* FIX FOR ELECTRON INPUT FREEZE BUG ON WINDOWS */
+input, textarea {
+  -webkit-app-region: no-drag;
+  will-change: transform;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  cursor: text;
+  caret-color: #667eea;
+}
+
+select {
+  -webkit-app-region: no-drag;
+  will-change: transform;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  cursor: pointer;
+}
+
+/* Cursor indication for better UX - using CSS only for reliability */
+input, textarea, select {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease !important;
+}
+
+input:hover, textarea:hover, select:hover {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2) !important;
+  background-color: #f8f9ff !important;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: none !important;
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.3) !important;
+  background-color: #fff !important;
+}
+
+/* Ensure table inputs also get the indication */
+#items-tbody input:hover,
+#items-tbody select:hover {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2) !important;
+  background-color: #f8f9ff !important;
+}
+
+#items-tbody input:focus,
+#items-tbody select:focus {
+  outline: none !important;
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.3) !important;
+  background-color: #fff !important;
+}
+
+/* Totals section inputs */
+.totals-section input:hover {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2) !important;
+  background-color: #f8f9ff !important;
+}
+
+.totals-section input:focus {
+  outline: none !important;
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.3) !important;
+  background-color: #fff !important;
+}
+
+/* Buttons cursor */
+button, .btn {
+  cursor: pointer;
+}
+
+button:disabled, .btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background-color: #f0f2f5;
@@ -493,6 +573,54 @@ body {
   outline: none;
   border-color: #667eea;
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+/* Advance/Balance input group with +/- buttons */
+.advance-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.advance-sign-btn {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #e2e8f0;
+  background: white;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: bold;
+  color: #718096;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.advance-sign-btn:hover {
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.advance-sign-btn.active {
+  background: #667eea;
+  border-color: #667eea;
+  color: white;
+}
+
+.advance-sign-btn#advance-minus-btn.active {
+  background: #e53e3e;
+  border-color: #e53e3e;
+}
+
+.advance-sign-btn#advance-plus-btn.active {
+  background: #38a169;
+  border-color: #38a169;
+}
+
+.advance-input-group .total-input {
+  width: 100px;
 }
 
 /* Data Table */

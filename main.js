@@ -249,6 +249,7 @@ ipcMain.handle('update-estimate', async (event, estimateData) => {
     bill_to_address: estimateData.bill_to_address || '',
     sub_total: parseFloat(estimateData.sub_total),
     advanced_payment: parseFloat(estimateData.advanced_payment) || 0,
+    previous_balance: parseFloat(estimateData.previous_balance) || 0,
     advance_sign: estimateData.advance_sign || '-',
     rounding: parseFloat(estimateData.rounding) || 0,
     total: parseFloat(estimateData.total),
