@@ -248,13 +248,15 @@ async function viewEstimateDetails(id) {
   if (!estimate) return;
 
   var pending = parseFloat(estimate.total || 0) - parseFloat(estimate.advanced_payment || 0);
+  var ship = parseFloat(estimate.shipping_charges || 0);
+  var prevBal = parseFloat(estimate.previous_balance || 0);
   var itemsText = '';
   for (var i = 0; i < estimate.items.length; i++) {
     var item = estimate.items[i];
     itemsText += '  - ' + item.item_name + ' (' + item.quantity + ' ' + item.unit + ' @ ₹' + item.rate + ') = ₹' + item.amount.toFixed(2) + '\n';
   }
 
-  var details = '\nESTIMATE: ' + estimate.estimate_number + '\nDate: ' + new Date(estimate.estimate_date).toLocaleDateString('en-GB') + '\n\nCUSTOMER:\n' + estimate.bill_to_name + '\n' + (estimate.bill_to_address || '') + '\n\nITEMS:\n' + itemsText + '\nTOTALS:\nSub Total: ₹' + parseFloat(estimate.sub_total).toFixed(2) + '\nAdvanced Payment: ₹' + parseFloat(estimate.advanced_payment || 0).toFixed(2) + '\nRounding: ₹' + parseFloat(estimate.rounding || 0).toFixed(2) + '\n──────────────────\nTotal: ₹' + parseFloat(estimate.total).toFixed(2) + '\nPending: ₹' + pending.toFixed(2) + '\n\nStatus: ' + (pending > 0 ? 'PENDING PAYMENT' : 'COMPLETED');
+  var details = '\nESTIMATE: ' + estimate.estimate_number + '\nDate: ' + new Date(estimate.estimate_date).toLocaleDateString('en-GB') + '\n\nCUSTOMER:\n' + estimate.bill_to_name + '\n' + (estimate.bill_to_address || '') + '\n\nITEMS:\n' + itemsText + '\nTOTALS:\nSub Total: ₹' + parseFloat(estimate.sub_total).toFixed(2) + '\nShipping Charges: ₹' + ship.toFixed(2) + '\nAdvanced Payment: ₹' + parseFloat(estimate.advanced_payment || 0).toFixed(2) + '\nPrevious Balance: ₹' + prevBal.toFixed(2) + '\nRounding: ₹' + parseFloat(estimate.rounding || 0).toFixed(2) + '\n──────────────────\nTotal: ₹' + parseFloat(estimate.total).toFixed(2) + '\nPending: ₹' + pending.toFixed(2) + '\n\nStatus: ' + (pending > 0 ? 'PENDING PAYMENT' : 'COMPLETED');
 
   alert(details.trim());
 }
@@ -326,6 +328,12 @@ function setupDashboardListeners() {
 function generatePreviewHTML(estimate) {
   function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function fmt(n) { return parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function roundMoney(value) { return Math.round(value * 100) / 100; }
+  function normalizeMoney(value) {
+    var rounded = roundMoney(value);
+    return rounded === 0 ? 0 : rounded;
+  }
+  function shouldShowMoney(value) { return normalizeMoney(value) !== 0; }
   function numToWords(num) {
     if (num === 0) return 'Zero Rupees Only';
     num = Math.round(num);
@@ -353,11 +361,12 @@ function generatePreviewHTML(estimate) {
 
   var items = estimate.items || [];
   var sub = parseFloat(estimate.sub_total) || 0;
-  var adv = parseFloat(estimate.advanced_payment) || 0;
-  var prevBal = parseFloat(estimate.previous_balance) || 0;
-  var rnd = parseFloat(estimate.rounding) || 0;
-  // Formula: Grand Total = Sub Total - Advance + Previous Balance + Rounding
-  var total = sub - adv + prevBal + rnd;
+  var ship = normalizeMoney(parseFloat(estimate.shipping_charges) || 0);
+  var adv = normalizeMoney(parseFloat(estimate.advanced_payment) || 0);
+  var prevBal = normalizeMoney(parseFloat(estimate.previous_balance) || 0);
+  var rnd = normalizeMoney(parseFloat(estimate.rounding) || 0);
+  // Formula: Grand Total = Sub Total + Shipping Charges - Advance + Previous Balance + Rounding
+  var total = roundMoney(sub + ship - adv + prevBal + rnd);
   var kg = 0;
 
   var rows = '';
@@ -376,10 +385,20 @@ function generatePreviewHTML(estimate) {
   }
 
   var fmtDate = new Date(estimate.estimate_date).toLocaleDateString('en-GB');
-  // Always show all rows including Previous Balance (rowspan = 6)
-  var rowspanVal = '6';
+  var optionalRows = [];
+  if (shouldShowMoney(ship)) optionalRows.push(['Shipping Charges', ship]);
+  if (shouldShowMoney(adv)) optionalRows.push(['Advance', adv]);
+  if (shouldShowMoney(prevBal)) optionalRows.push(['Previous Balance', prevBal]);
+  if (shouldShowMoney(rnd)) optionalRows.push(['Rounding', rnd]);
 
-  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}</style></head><body><div class="c"><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + estimate.estimate_number + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(estimate.bill_to_name) + '<br>' + esc(estimate.bill_to_address || '').replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Advance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(adv) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Previous Balance</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(prevBal) + '</td></tr><tr><td style="border:1px solid #333;padding:6px 10px">Rounding</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(rnd) + '</td></tr><tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
+  var optionalRowsHtml = '';
+  optionalRows.forEach(function(row) {
+    optionalRowsHtml += '<tr><td style="border:1px solid #333;padding:6px 10px">' + row[0] + '</td><td style="border:1px solid #333;padding:6px 10px;text-align:right">' + fmt(row[1]) + '</td></tr>';
+  });
+
+  var rowspanVal = String(optionalRows.length + 3);
+
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:11px;margin:0;padding:0}.c{border:1px solid #333}</style></head><body><div class="c"><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333"><strong>Estimate No:</strong> ' + estimate.estimate_number + '<br><strong>Date:</strong> ' + fmtDate + '</td><td style="width:56%;padding:10px;border:1px solid #333"><strong>Bill To:</strong><br>' + esc(estimate.bill_to_name) + '<br>' + esc(estimate.bill_to_address || '').replace(/,/g, '<br>') + '</td></tr></table><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8e8e8"><th style="border:1px solid #333;padding:8px;width:5%">#</th><th style="border:1px solid #333;padding:8px;text-align:left;width:39%">Item & Description</th><th style="border:1px solid #333;padding:8px;width:10%">Qty</th><th style="border:1px solid #333;padding:8px;width:8%">Unit</th><th style="border:1px solid #333;padding:8px;width:15%;text-align:right">Rate</th><th style="border:1px solid #333;padding:8px;width:23%;text-align:right">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><table style="width:100%;border-collapse:collapse"><tr><td style="width:44%;padding:10px;border:1px solid #333;vertical-align:top" rowspan="' + rowspanVal + '"><strong>Total Qty:</strong> ' + kg.toFixed(2) + ' kg<br><strong>In Words:</strong> ' + numToWords(Math.abs(total)) + '</td><td style="border:1px solid #333;padding:6px 10px;width:33%">Sub Total</td><td style="border:1px solid #333;padding:6px 10px;text-align:right;width:23%">' + fmt(sub) + '</td></tr>' + optionalRowsHtml + '<tr style="background:#e8e8e8;font-weight:bold"><td style="border:1px solid #333;padding:8px 10px">TOTAL</td><td style="border:1px solid #333;padding:8px 10px;text-align:right">₹' + fmt(total) + '</td></tr><tr><td colspan="2" style="border:1px solid #333;padding:15px;text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #333;padding-top:5px;font-size:10px">Authorized Signature</div></td></tr></table></div></body></html>';
 }
 
 // Open estimate preview modal with PDF view
@@ -425,6 +444,7 @@ async function markEstimateCompleted(id) {
       bill_to_name: estimate.bill_to_name,
       bill_to_address: estimate.bill_to_address || '',
       sub_total: estimate.sub_total,
+      shipping_charges: estimate.shipping_charges || 0,
       advanced_payment: total, // Set advance to total amount
       previous_balance: estimate.previous_balance || 0,
       rounding: estimate.rounding || 0,
