@@ -79,9 +79,7 @@
       "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" ls-tree:*)",
       "Bash(cmd /c \"dir c:\\\\Project\\\\invoice\\\\invoicegreen\\\\dist 2>&1\")",
       "Bash(cmd /c \"cd /d c:\\\\Project\\\\invoice\\\\invoicegreen && set CSC_IDENTITY_AUTO_DISCOVERY=false && npm run build 2>&1\")",
-      "Bash(cmd /c:*)",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" log --oneline --since=\"2 days ago\")",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" log --oneline --format=\"%h %ad %s\" --date=short -10)"
+      "Bash(cmd /c:*)"
     ]
   }
 }

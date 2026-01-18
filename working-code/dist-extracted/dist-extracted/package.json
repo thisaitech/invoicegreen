@@ -1,0 +1,12 @@
+{
+  "name": "estimate-generator",
+  "version": "1.0.0",
+  "description": "Estimate Generator - Create, manage, and print professional estimates",
+  "main": "main.js",
+  "author": "Invoice Green",
+  "license": "MIT",
+  "dependencies": {
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2"
+  }
+}

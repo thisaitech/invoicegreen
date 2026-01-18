@@ -66,22 +66,7 @@
       "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" diff --name-only)",
       "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" checkout -- dashboard-styles.css dashboard.js index.html main.js renderer.js styles.css)",
       "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" log --oneline -10)",
-      "Bash(cmd /c \"cd /d c:\\\\Project\\\\invoice\\\\invoicegreen && npm run build 2>&1\")",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" checkout 0ff9832 -- dashboard.js dashboard-styles.css index.html main.js renderer.js)",
-      "Bash(cmd /c \"cd /d c:\\\\Project\\\\invoice\\\\invoicegreen && npm exec asar -- extract dist\\\\win-unpacked\\\\resources\\\\app.asar dist-extracted\")",
-      "Bash(cmd /c \"dir c:\\\\Project\\\\invoice\\\\invoicegreen\\\\dist-extracted 2>&1\")",
-      "Bash(cmd /c \"if exist c:\\\\Project\\\\invoice\\\\invoicegreen\\\\dist-extracted \\(echo EXISTS\\) else \\(echo NOT_FOUND\\)\")",
-      "Bash(cmd /c \"cd /d c:\\\\Project\\\\invoice\\\\invoicegreen && node_modules\\\\.bin\\\\electron . 2>&1\")",
-      "Bash(cmd /c \"if exist c:\\\\Project\\\\invoice\\\\invoicegreen\\\\customers.js \\(echo EXISTS\\) else \\(echo NOT_FOUND\\)\")",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" show 0ff9832:renderer.js)",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" diff 0ff9832 -- index.html)",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" show 0ff9832:customers.js)",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" ls-tree:*)",
-      "Bash(cmd /c \"dir c:\\\\Project\\\\invoice\\\\invoicegreen\\\\dist 2>&1\")",
-      "Bash(cmd /c \"cd /d c:\\\\Project\\\\invoice\\\\invoicegreen && set CSC_IDENTITY_AUTO_DISCOVERY=false && npm run build 2>&1\")",
-      "Bash(cmd /c:*)",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" log --oneline --since=\"2 days ago\")",
-      "Bash(git -C \"c:\\\\Project\\\\invoice\\\\invoicegreen\" log --oneline --format=\"%h %ad %s\" --date=short -10)"
+      "Bash(cmd /c \"cd /d c:\\\\Project\\\\invoice\\\\invoicegreen && npm run build 2>&1\")"
     ]
   }
 }
